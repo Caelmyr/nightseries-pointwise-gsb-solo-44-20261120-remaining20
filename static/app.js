@@ -4,6 +4,7 @@ import {
 } from "./ui.js";
 import { definitions, fieldTools } from "./tools-view.js";
 import { curveChart, drawRegions, histogramChart, profileChart } from "./charts.js";
+import { shellTraceChart } from "./shell-chart.js";
 import {
   acquisition, alignment, archives, inspection, noSeries, photometry, quality, selectedFrame, stacks, tabs, title,
 } from "./views.js";
@@ -150,6 +151,12 @@ function repaint() {
   if (histogram) histogramChart(histogram, session.histogram);
   const profile = $("#profile-chart");
   if (profile) profileChart(profile, session.profile);
+  if (session.toolResult?.key === "shell") {
+    for (const entry of session.toolResult.data.directions) {
+      const canvas = $(`#shell-trace-${entry.key}`);
+      if (canvas) shellTraceChart(canvas, entry.trace, entry.key);
+    }
+  }
 }
 
 function valueEditor(title, content, handler, submit) {
@@ -545,6 +552,7 @@ function toolInputs(target, kind) {
   for (const checkbox of target.querySelectorAll("input[type=checkbox]")) values[checkbox.name] = checkbox.checked;
   if (values.band === "all") delete values.band;
   if (values.threshold === "") delete values.threshold;
+  if (values.search_radius === "") delete values.search_radius;
   if (kind === "surface") {
     for (const key of ["target", "sky"]) {
       values[key] = {};

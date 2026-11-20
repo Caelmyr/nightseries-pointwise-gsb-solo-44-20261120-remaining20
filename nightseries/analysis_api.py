@@ -10,6 +10,7 @@ from .gain import gain_report
 from .growth import flux_growth
 from .pairing import pair_report
 from .registration import preview_stream
+from .shell import draw_shell, shell_csv, shell_profile
 from .surface import draw_regions_on_reference, surface_brightness
 
 
@@ -109,5 +110,24 @@ def register_inspection_tools(api, service):
             result = surface_brightness(images, options)
             if format == "csv":
                 return attachment(surface_csv(result), "text/csv; charset=utf-8", "extended-source-photometry.csv")
+            return jsonify(result)
+        return run(sid, compute)
+
+    @api.post("/series/<sid>/shell")
+    def shell_widths(sid):
+        def compute(images, options):
+            result, plane = shell_profile(images, options)
+            mode = enum(options.get("format", "json"), "环壳输出", {"json", "csv", "image"})
+            if mode == "csv":
+                return attachment(shell_csv(result), "text/csv; charset=utf-8", "shell-widths.csv")
+            if mode == "image":
+                first, second = result["directions"]
+                return image_response(
+                    draw_shell(plane, result, images.document["stretch"]),
+                    X_Shell_A_State=first["state"],
+                    X_Shell_B_State=second["state"],
+                    X_Shell_A_Width="" if first["width"] is None else first["width"],
+                    X_Shell_B_Width="" if second["width"] is None else second["width"],
+                )
             return jsonify(result)
         return run(sid, compute)

@@ -131,6 +131,33 @@ function cutoutResult({data}) {
     [E(row.filename), flag(row.state), row.origin_x ?? "—", row.origin_y ?? "—", pct(row.valid_fraction)]));
 }
 
+function shellResult({data, images}) {
+  return shellReport(data, images.image);
+}
+
+function shellReport(data, imageUrl) {
+  const compare = data.comparison;
+  const width = entry => entry.width == null ? "—" : `${fmt(entry.width)} ± ${fmt(entry.width_spread)}`;
+  return `${imageUrl ? figures([[imageUrl, "本次剖面在影像上的位置：实线为参与剖面，虚线为两侧边缘，标签为带宽"]]) : ""}
+    ${grid(["方向", "角度 °", "宽度 px", "内缘 px", "外缘 px", "半径 px", "参与 / 给出宽度 / 共", "状态", "说明"], data.directions.map(entry =>
+      [E(entry.key), fmt(entry.angle, 1), width(entry), fmt(entry.inner_edge), fmt(entry.outer_edge),
+        entry.radius == null ? "—" : `${fmt(entry.radius)} ± ${fmt(entry.radius_spread)}`,
+        `${entry.used_profiles} / ${entry.complete_profiles} / ${entry.profiles}`,
+        flag(entry.state), entry.note || "—"]))}
+    ${compare.state === "measured"
+      ? `<p class="help">两侧宽度差 ${fmt(compare.difference)} px · B / A = ${fmt(compare.ratio, 3)}</p>`
+      : `<p class="help">${E(compare.note)}</p>`}
+    <h3 style="margin:16px 0 6px">径向剖面（标称方向）</h3>
+    <div class="two-previews">${data.directions.map(entry =>
+      `<figure><canvas class="chart short" id="shell-trace-${entry.key}" aria-label="方向 ${E(entry.key)} 的径向剖面轨迹"></canvas>
+       <figcaption>方向 ${E(entry.key)} · ${E(entry.trace?.state ?? "—")} · 内 ${fmt(entry.trace?.inner_edge, 2)} / 外 ${fmt(entry.trace?.outer_edge, 2)} px</figcaption></figure>`).join("")}</div>
+    ${grid(["方向", "角度 °", "剖面状态", "峰半径 px", "内缘 px", "外缘 px", "宽度 px", "信噪比", "背景 ADU", "截断"], data.directions.flatMap(entry =>
+      entry.rays.map(ray => [E(entry.key), fmt(ray.angle, 1), flag(ray.state), fmt(ray.peak_radius, 2),
+        fmt(ray.inner_edge, 2), fmt(ray.outer_edge, 2), ray.width == null ? "—" : fmt(ray.width, 2),
+        fmt(ray.snr, 1), fmt(ray.background_adu, 1), [ray.inner_cut, ray.outer_cut].filter(Boolean).join(" / ") || "—"])))}
+    <p class="help">各条剖面独立量测，再以中位数汇总；没有把错开的峰平均成一条更厚的壳。宽度只用两侧都回到背景的剖面，截边或坏区处保留实测到的那一侧。</p>`;
+}
+
 function surfaceFields(doc, current) {
   const w = doc.dimensions.width, h = doc.dimensions.height;
   const groups = [
@@ -223,6 +250,23 @@ export const definitions = {
       pick("版面主题", "theme", [["dark", "深色"], ["print", "浅色"]], o.theme ?? "dark") +
       check("统一亮度范围", "linked_scale", o.linked_scale ?? true) +
       check("在预览册中标出坏区", "flag_invalid", o.flag_invalid ?? false),
+  },
+  shell: {
+    title: "环壳剖面", route: "/shell", result: shellResult, images: ["image"], csv: "shell-widths.csv",
+    fields: (d, o) => framePick(d, "测量曝光", "frame", o.frame ?? d.reference) +
+      pick("影像层", "stream", sourceFits, o.stream ?? "calibrated") +
+      numeric("中心 X px", "center_x", o.center_x ?? Math.round(d.dimensions.width / 2), 0, d.dimensions.width - 1) +
+      numeric("中心 Y px", "center_y", o.center_y ?? Math.round(d.dimensions.height / 2), 0, d.dimensions.height - 1) +
+      numeric("方向 A °", "angle_a", o.angle_a ?? 0, -720, 720) +
+      numeric("方向 B °", "angle_b", o.angle_b ?? 180, -720, 720) +
+      numeric("每侧剖面数（奇数）", "profiles", o.profiles ?? 5, 1, 15, 1) +
+      numeric("相邻剖面总张角 °", "spread", o.spread ?? 6, 0, 45) +
+      numeric("径向步长 px", "step", o.step ?? 0.5, 0.1, 5) +
+      numeric("边缘阈值（峰值比例）", "edge_fraction", o.edge_fraction ?? 0.5, 0.05, 0.95) +
+      numeric("最低峰值信噪比", "min_snr", o.min_snr ?? 5, 1, 50) +
+      numeric("峰外背景起点 px", "background_gap", o.background_gap ?? 10, 0, 200) +
+      numeric("最短亮段 px", "min_width", o.min_width ?? 1.5, 0, 50) +
+      numeric("给定峰半径 px（可空）", "search_radius", o.search_radius ?? "", 0, 2000),
   },
   cutout: {
     title: "孔径取证框", route: "/cutout", result: cutoutResult, exportFormat: "download", suffix: "zip",

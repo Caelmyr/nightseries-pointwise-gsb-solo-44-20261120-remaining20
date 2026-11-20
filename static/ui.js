@@ -10,6 +10,9 @@ const reasons = {
   unaligned: "待对准", insufficient_aperture: "孔径覆盖不足", insufficient_sky: "背景环不足",
   saturated: "饱和", nonpositive: "净光度不为正", few_stars: "少星", broad_stars: "星点过宽",
   elongated: "拖尾", masked: "掩膜面积大", no_support: "有效像素不足", manual: "手工", automatic: "自动", reference: "基准",
+  few_profiles: "仅一条完整剖面", width_incomplete: "宽度未量全", no_shell: "未见环壳",
+  partial_inner: "缺内缘", partial_outer: "缺外缘", narrow: "亮段过窄", rejected: "已剔除",
+  too_short: "剖面过短", no_signal: "无亮段", no_edges: "未回背景", no_background: "缺背景",
 };
 export const stateLabel = state => reasons[state] || state?.replace(/^target_/, "目标星：").replace(/^comparison_/, "比较星：").replace(/([：])(.+)$/, (_, a, b) => a + (reasons[b] || b)) || "—";
 export const fmt = (value, digits = 2) => value == null || !Number.isFinite(Number(value)) ? "—" : Number(value).toFixed(digits);
