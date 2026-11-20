@@ -62,19 +62,44 @@ def quality_csv(report):
     columns = [
         "filename", "started_utc", "filter", "star_count", "fwhm_px", "elongation_ratio",
         "sky_median_adu", "sky_noise_adu", "sky_spread_adu", "masked_fraction",
-        "saturated_fraction", "dx_px", "dy_px", "flags",
+        "saturated_fraction", "dx_px", "dy_px",
+        "common_angle_deg", "common_elongation", "common_state", "zones_used",
+        "zones_deviating", "zones_insufficient", "flags",
     ]
-    rows = (
-        [
+    rows = []
+    for row in report["rows"]:
+        orientation = row.get("orientation") or {}
+        common = orientation.get("common") or {}
+        summary = orientation.get("summary") or {}
+        rows.append([
             row["filename"], row["started"], row["band"], row["stars_used"],
             row["median_fwhm"], row["median_elongation"],
             (row["sky"] or {}).get("median"), (row["sky"] or {}).get("sigma"),
             row["sky_spread"], row["masked_fraction"], row["saturated_fraction"],
-            *(row["offset"] or (None, None)), " ".join(row["flags"]),
-        ]
-        for row in report["rows"]
-    )
+            *(row["offset"] or (None, None)),
+            common.get("angle"), common.get("elongation"), common.get("state"),
+            common.get("zones_used"), summary.get("zones_deviating"),
+            summary.get("zones_insufficient"), " ".join(row["flags"]),
+        ])
     return csv_bytes(columns, rows)
+
+
+def zone_csv(payload):
+    orientation = payload["orientation"]
+    common = orientation["common"]
+    fields = (
+        "filename", "line", "column", "stars", "angle_deg", "angle_spread_deg", "angle_offset_deg",
+        "elongation", "elongation_ratio", "valid_fraction", "state", "reasons",
+        "common_angle_deg", "common_elongation", "common_state",
+    )
+    rows = ([
+        payload["filename"], zone["line"], zone["column"], zone["stars"],
+        zone["angle"], zone["angle_spread"], zone["angle_offset"],
+        zone["elongation"], zone["elongation_ratio"], zone["valid_fraction"],
+        zone["state"], " ".join(zone["reasons"]),
+        common["angle"], common["elongation"], common["state"],
+    ] for zone in orientation["zones"])
+    return csv_bytes(fields, rows)
 
 
 def profile_csv(profile):

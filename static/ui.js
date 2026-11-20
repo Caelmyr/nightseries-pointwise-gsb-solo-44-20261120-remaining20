@@ -10,6 +10,12 @@ const reasons = {
   unaligned: "待对准", insufficient_aperture: "孔径覆盖不足", insufficient_sky: "背景环不足",
   saturated: "饱和", nonpositive: "净光度不为正", few_stars: "少星", broad_stars: "星点过宽",
   elongated: "拖尾", masked: "掩膜面积大", no_support: "有效像素不足", manual: "手工", automatic: "自动", reference: "基准",
+  local_skew: "分区方向不一致", orientation_unknown: "共同方向证据不足",
+  consistent: "与共同方向一致", deviating: "本区偏离",
+  masked_zone: "掩膜遮挡", round_stars: "星点近圆形", scatter: "方向散乱",
+  round_frames: "全图星点近圆，无共同拖尾方向", masked_frames: "全图星点被掩膜遮挡",
+  no_common_direction: "无共同方向", one_zone_only: "仅一区可定方向", zones_disagree: "各区方向不一致",
+  angle_shift: "方向偏离", elongation_change: "拖尾程度不同", defined: "已定",
 };
 export const stateLabel = state => reasons[state] || state?.replace(/^target_/, "目标星：").replace(/^comparison_/, "比较星：").replace(/([：])(.+)$/, (_, a, b) => a + (reasons[b] || b)) || "—";
 export const fmt = (value, digits = 2) => value == null || !Number.isFinite(Number(value)) ? "—" : Number(value).toFixed(digits);

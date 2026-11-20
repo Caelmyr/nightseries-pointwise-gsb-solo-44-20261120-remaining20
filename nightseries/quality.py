@@ -7,6 +7,7 @@ from scipy.ndimage import maximum_filter
 
 from .calibration import robust_summary
 from .domain import DomainError, MAX_ACTIVE_PIXELS, enum, integer, number, usable_science_frames
+from .orientation import orientation_summary
 from .registration import offset_for
 
 FWHM_FACTOR = 2 * math.sqrt(2 * math.log(2))
@@ -157,6 +158,7 @@ def frame_quality(plane, options):
     result["sky_spread"] = None if len(usable) < 2 else float(max(usable) - min(usable))
     result["masked_fraction"] = float(np.mean(~plane.valid))
     result["saturated_fraction"] = float(np.mean(plane.saturated & plane.valid))
+    result["orientation"] = orientation_summary(result["stars"], plane, options)
     return result
 
 
@@ -188,6 +190,12 @@ def quality_report(images, options):
             flags.append("masked")
         if offset is None:
             flags.append("unaligned")
+        orientation = result["orientation"]
+        if orientation["summary"]["zones_deviating"]:
+            flags.append("local_skew")
+        common = orientation["common"]
+        if common["state"] != "defined" and "round_frames" not in common["reasons"]:
+            flags.append("orientation_unknown")
         quality_rows.append({
             "frame": frame_id,
             "filename": frame["filename"],
@@ -203,12 +211,15 @@ def quality_report(images, options):
             "masked_fraction": result["masked_fraction"],
             "saturated_fraction": result["saturated_fraction"],
             "offset": [offset.dx, offset.dy] if offset else None,
+            "orientation": orientation,
         })
     return {
         "kind": "quality",
         "revision": doc["revision"],
         "stream": stream,
         "band": band,
+        "width": images.dims.width,
+        "height": images.dims.height,
         "thresholds": {"fwhm": fwhm_limit, "elongation": elongation_limit},
         "rows": quality_rows,
     }

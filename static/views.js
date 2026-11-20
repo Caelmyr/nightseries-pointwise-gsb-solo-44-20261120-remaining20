@@ -253,22 +253,69 @@ function measurements(view, curve) {
   }))), {hint: row.filename, bare: true});
 }
 
+function zoneRows(orientation) {
+  const common = orientation.common;
+  const zoneState = state => badge(stateLabel(state), state === "consistent" ? "cyan" : state === "deviating" ? "warn" : "");
+  const note = zone => zone.reasons.length ? zone.reasons.map(stateLabel).join("、") : zone.state === "consistent" ? "—" : "";
+  return table(["分区（列, 行）", "星点", "有效像素", "方向 °", "方向离散 °", "相对共同方向 °", "拖尾轴比", "判定", "说明"],
+    orientation.zones.map(zone => ({cells: [
+      `${zone.column + 1}, ${zone.line + 1}`, zone.stars, pct(zone.valid_fraction), fmt(zone.angle, 1),
+      fmt(zone.angle_spread, 1), fmt(zone.angle_offset, 1),
+      common.angle != null && zone.elongation ? `${fmt(zone.elongation)}（${fmt((zone.elongation_ratio - 1) * 100, 0)}%）` : fmt(zone.elongation),
+      zoneState(zone.state), note(zone),
+    ]}))) + (common.state === "defined"
+      ? `<p class="help">共同方向 ${fmt(common.angle, 1)}° · 共同拖尾轴比 ${fmt(common.elongation)} · 按区等权合并 ${common.zones_used} 区，星点多的区不会独占结果。</p>`
+      : `<p class="help warn">共同方向无法确定：${common.reasons.map(stateLabel).join("、")}。这些分区只能记为证据不足，不按正常处理。</p>`);
+}
+
+function orientationPanel(view) {
+  const quality = view.quality;
+  const selected = quality.rows.find(row => row.frame === view.qualityFrame) || quality.rows[0];
+  if (!selected) return "";
+  const orientation = selected.orientation;
+  const controls = `<div class="widget-controls"><select id="orientation-frame" aria-label="分区检查曝光">
+    ${quality.rows.map(row => `<option value="${E(row.frame)}" ${row.frame === selected.frame ? "selected" : ""}>${E(row.filename)}</option>`).join("")}
+    </select></div>`;
+  const exports = `${action("在图上标出星点与方向", "orientation-image", {style: "tiny ghost"})}
+    ${action("下载方向图 PNG", "orientation-download", {style: "tiny ghost"})}
+    ${action("下载分区 CSV", "orientation-csv", {style: "tiny ghost"})}`;
+  const map = view.orientationResult?.frame === selected.frame
+    ? `<figure class="wide-preview"><img src="${E(view.orientationResult.image)}" alt="${E(selected.filename)} 的星点位置与拖尾方向">
+       <figcaption>星点位置与拖尾方向 · 绿＝与共同方向一致，橙＝本区偏离，紫＝证据不足</figcaption></figure>`
+    : `<p class="help">「在图上标出星点与方向」把量到的星点位置和拖尾方向放回这一帧。</p>`;
+  return panel(`分区拖尾 · ${selected.filename}`, `${map}${zoneRows(orientation)}`, {
+    hint: "把量到的星点落回图面，区内等权比较，避免单区星点数量左右全图。", controls: controls + exports,
+  });
+}
+
 export function quality(view) {
   const doc = view.doc;
-  const opts = view.qualityOptions || {band: "all", stream: "calibrated", fwhm_limit: 5, elongation_limit: 1.7};
-  const rows = (view.quality?.rows || []).map(row => ({cells: [
-    action(row.filename, "open-frame", {style: "tiny ghost", attrs: `data-id="${row.frame}"`}),
-    String(row.stars_used), fmt(row.median_fwhm), fmt(row.median_elongation), fmt(row.sky?.median, 1),
-    fmt(row.sky_spread, 1), pct(row.masked_fraction), row.flags.length ? row.flags.map(flag => badge(stateLabel(flag), "warn")).join(" ") : status("正常", true),
-  ]}));
+  const opts = view.qualityOptions || {band: "all", stream: "calibrated", fwhm_limit: 5, elongation_limit: 1.7, zones: 3, zone_min_stars: 3, deviation: 15};
+  const quality = view.quality;
+  const rows = (quality?.rows || []).map(row => {
+    const common = row.orientation?.common;
+    const label = !common ? "—" : common.state === "defined"
+      ? `${fmt(common.angle, 1)}° / ${fmt(common.elongation)}`
+      : common.reasons.map(stateLabel).join("、") || stateLabel("orientation_unknown");
+    const zones = row.orientation ? `${row.orientation.summary.zones_deviating} / ${row.orientation.summary.zones_insufficient}` : "—";
+    return {cells: [
+      action(row.filename, "open-frame", {style: "tiny ghost", attrs: `data-id="${row.frame}"`}),
+      String(row.stars_used), fmt(row.median_fwhm), fmt(row.median_elongation), label, zones, fmt(row.sky?.median, 1),
+      fmt(row.sky_spread, 1), pct(row.masked_fraction), row.flags.length ? row.flags.map(flag => badge(stateLabel(flag), "warn")).join(" ") : status("正常", true),
+    ]};
+  });
   return `<div class="column">${panel("质检设置", `<form id="quality-form" class="forms three">
     ${pick("滤镜", "band", filters(doc, true), opts.band)}${pick("测量图层", "stream", Object.entries(sources).slice(0, 2), opts.stream)}
     ${input("星点 FWHM 提示阈值 px", "fwhm_limit", opts.fwhm_limit, {type: "number", min: 1, max: 25})}
     ${input("拖尾轴比提示阈值", "elongation_limit", opts.elongation_limit, {type: "number", min: 1.05, max: 9})}
+    ${input("分区每边数", "zones", opts.zones, {type: "number", min: 2, max: 6, step: 1})}
+    ${input("每区最少星点", "zone_min_stars", opts.zone_min_stars, {type: "number", min: 3, max: 30, step: 1})}
+    ${input("方向偏离阈值 °", "deviation", opts.deviation, {type: "number", min: 3, max: 60})}
     <div class="actions"><button type="submit" class="button primary" ${doc.frames.length ? "" : "disabled"}>运行曝光质检</button></div></form>`)}
-    ${panel("曝光质量记录", rows.length ? table(["曝光", "星点数", "FWHM px", "拖尾轴比", "天空 ADU", "背景跨度 ADU", "坏区", "提示"], rows) : box("运行质检后逐帧显示星点和背景情况。"),
+    ${panel("曝光质量记录", rows.length ? table(["曝光", "星点数", "FWHM px", "拖尾轴比", "共同方向 ° / 轴比", "偏离区 / 证据不足区", "天空 ADU", "背景跨度 ADU", "坏区", "提示"], rows) : box("运行质检后逐帧显示星点和背景情况。"),
     {bare: true, controls: `<div class="actions">${action("保存结果", "save-result", {style: "tiny", attrs: 'data-kind="quality"', disabled: !rows.length})}
-    ${action("下载质检 CSV", "result-csv", {style: "tiny ghost", attrs: 'data-kind="quality"', disabled: !rows.length})}</div>`})}</div>`;
+    ${action("下载质检 CSV", "result-csv", {style: "tiny ghost", attrs: 'data-kind="quality"', disabled: !rows.length})}</div>`})}
+    ${quality && rows.length ? orientationPanel(view) : ""}</div>`;
 }
 
 export function stacks(view) {
@@ -302,7 +349,11 @@ export function archives(view) {
   const result = archived?.result;
   const data = result ? panel(archived.label, archived.kind === "photometry"
     ? `<canvas class="chart" id="archive-chart" aria-label="已保存光度曲线"></canvas>${table(["曝光", "中点 UTC", "目标差分", "检查差分", "状态"], curveRows(view, result))}`
-    : table(["曝光", "星点数", "FWHM px", "拖尾轴比"], result.rows.map(row => ({cells: [E(row.filename), E(row.stars_used), fmt(row.median_fwhm), fmt(row.median_elongation)]}))),
+    : table(["曝光", "星点数", "FWHM px", "拖尾轴比", "共同方向 ° / 轴比", "偏离区 / 证据不足区"], result.rows.map(row => ({cells: [
+      E(row.filename), E(row.stars_used), fmt(row.median_fwhm), fmt(row.median_elongation),
+      row.orientation?.common?.state === "defined" ? `${fmt(row.orientation.common.angle, 1)}° / ${fmt(row.orientation.common.elongation)}` : "—",
+      row.orientation ? `${row.orientation.summary.zones_deviating} / ${row.orientation.summary.zones_insufficient}` : "—",
+    ]}))),
     {hint: `按保存时的结果查看 · 观测版本 r${archived.revision}`, controls: action("移除归档", "delete-archive", {style: "tiny danger", attrs: `data-id="${archived.id}"`})}) : "";
   return `<div class="column">${panel("已保存结果", body, {controls: action("刷新结果", "archives", {style: "tiny ghost"})})}${data}</div>`;
 }

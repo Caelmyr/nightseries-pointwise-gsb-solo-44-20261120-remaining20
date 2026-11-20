@@ -11,16 +11,17 @@ from .calibration import ObservationImages, calibration_status
 from .demo import SCENARIOS, make_demo
 from .domain import (
     ASSET_KINDS, MAX_ASSET_BYTES, MAX_FRAMES, MAX_SERIES_BYTES, STREAMS, DomainError,
-    enum, integer, list_value, object_value, text,
+    enum, identifier, integer, list_value, object_value, text,
 )
 from .exports import (
-    ARCHIVE_LIMIT, photometry_csv, profile_csv, quality_csv, read_bundle, write_bundle,
+    ARCHIVE_LIMIT, photometry_csv, profile_csv, quality_csv, read_bundle, write_bundle, zone_csv,
 )
+from .orientation import draw_orientation_map, orientation_summary
 from .photometry import light_curve
 from .preview import (
     difference_preview, inspect_pixel, raster_histogram, render_plane, sample_line,
 )
-from .quality import frame_quality, quality_report
+from .quality import analyze_stars, frame_quality, quality_report
 from .raster import image_summary, make_fits
 from .registration import preview_stream, run_registration
 from .stacking import compute_stack, coverage_preview
@@ -409,6 +410,42 @@ def register_analysis(api, service):
         def compute():
             result = compute_result(service, sid, kind, options)
             return output_result(kind, result) if options.get("format") == "csv" else jsonify(result)
+        return service.compute(compute)
+
+    @api.post("/series/<sid>/analysis/quality/zone")
+    def quality_zone(sid):
+        options = request_data()
+        format = enum(options.get("format", "json"), "分区输出", {"json", "csv", "image"})
+
+        def compute():
+            images = service.images(sid)
+            verify_computed(images.document, options)
+            stream = enum(options.get("stream", "calibrated"), "质检影像", {"raw", "calibrated"})
+            frame = identifier(options.get("frame"), "分区检查曝光")
+            plane = images.calibrated(frame) if stream == "calibrated" else images.raw(frame, True)
+            result = analyze_stars(plane, options)
+            report = orientation_summary(result["stars"], plane, options, detail=format == "image")
+            payload = {
+                "frame": frame,
+                "filename": images.rows[frame]["filename"],
+                "stream": stream,
+                "width": images.dims.width,
+                "height": images.dims.height,
+                "stars_used": result["stars_used"],
+                "median_elongation": result["median_elongation"],
+                "orientation": report,
+            }
+            if format == "csv":
+                return attachment(zone_csv(payload), "text/csv; charset=utf-8", "exposure-orientation-zones.csv")
+            if format == "image":
+                image = draw_orientation_map(plane, report, images.document["stretch"])
+                common = report["common"]
+                headers = {"X_Zones_Deviating": report["summary"]["zones_deviating"]}
+                if common["angle"] is not None:
+                    headers["X_Common_Angle"] = round(common["angle"], 3)
+                return image_response(image, **headers)
+            payload["orientation"].pop("stars", None)
+            return jsonify(payload)
         return service.compute(compute)
 
     @api.get("/series/<sid>/snapshots")

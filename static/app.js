@@ -48,9 +48,11 @@ function resetResults(session) {
   }
   releaseUrl(session.pairImage);
   for (const url of Object.values(session.toolResult?.images || {})) releaseUrl(url);
+  releaseUrl(session.orientationResult?.image);
   Object.assign(session, {
     curve: null, quality: null, calibration: null, stack: null, registration: null,
     pairImage: null, toolResult: null, stars: null, pixel: null, chart: null, profile: null, points: [],
+    qualityFrame: null, orientationResult: null,
   });
 }
 
@@ -476,6 +478,9 @@ async function analysis(kind, data) {
     } else {
       session.qualityOptions = {...options, band: data.band};
       session.quality = result;
+      session.qualityFrame = result.rows[0]?.frame ?? null;
+      releaseUrl(session.orientationResult?.image);
+      session.orientationResult = null;
     }
     render();
   });
@@ -502,6 +507,29 @@ function saveResult(kind) {
     });
     view().archives = null;
     showMessage("已保存。可在结果归档查看。");
+  });
+}
+
+async function zoneExport(format) {
+  const session = view();
+  const frame = session.qualityFrame || session.quality?.rows[0]?.frame;
+  if (!frame) return;
+  const path = currentPath("/analysis/quality/zone");
+  const body = mutableOptions({...calculationOptions("quality"), frame, format});
+  if (format === "csv") {
+    download(await request(path, {method: "POST", data: body, type: "blob"}), "exposure-orientation-zones.csv");
+    return;
+  }
+  if (format === "download") {
+    download(await request(path, {method: "POST", data: {...body, format: "image"}, type: "blob"}),
+      `orientation-${frame}.png`);
+    return;
+  }
+  const blob = await request(path, {method: "POST", data: body, type: "blob"});
+  withActive(session, () => {
+    releaseUrl(session.orientationResult?.image);
+    session.orientationResult = {frame, image: URL.createObjectURL(blob)};
+    render();
   });
 }
 
@@ -757,6 +785,9 @@ const actions = {
   blink,
   "result-csv": ({kind}) => resultCsv(kind),
   "save-result": ({kind}) => saveResult(kind),
+  "orientation-csv": () => zoneExport("csv"),
+  "orientation-image": () => zoneExport("image"),
+  "orientation-download": () => zoneExport("download"),
   archives: loadArchives,
   archive: async ({id}) => {
     const session = view();
@@ -835,6 +866,15 @@ document.addEventListener("change", event => {
   }
   if (node.id === "field-tool" && node.value in definitions) {
     view().fieldTool = node.value;
+    render();
+  }
+  if (node.id === "orientation-frame") {
+    const session = view();
+    session.qualityFrame = node.value;
+    if (session.orientationResult?.frame !== node.value) {
+      releaseUrl(session.orientationResult?.image);
+      session.orientationResult = null;
+    }
     render();
   }
   if (node.id === "bundle-in" && node.files.length) {
