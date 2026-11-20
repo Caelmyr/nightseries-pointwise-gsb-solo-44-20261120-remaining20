@@ -278,10 +278,11 @@ function regionEditor(kind, original = null, position = {}) {
   const doc = view().doc;
   if (!doc.dimensions) return;
   const isAperture = kind === "apertures";
+  const isSky = kind === "sky_samples";
   const data = original || position;
   const dims = doc.dimensions;
   const int = {type: "number", min: 0, required: true};
-  let fields = input(isAperture ? "源点标签" : "坏区名称", "label", data.label, {wide: true, required: true});
+  let fields = input(isAperture ? "源点标签" : isSky ? "空天样本名称" : "坏区名称", "label", data.label, {wide: true, required: true});
   if (isAperture) {
     fields += pick("孔径角色", "role", Object.entries(roles), data.role || "target", true);
     fields += fieldEditor([
@@ -295,12 +296,15 @@ function regionEditor(kind, original = null, position = {}) {
       ["右 X（开区间）", "right", data.right, {...int, max: dims.width}],
       ["下 Y（开区间）", "bottom", data.bottom, {...int, max: dims.height}],
     ]);
-    fields += pick("应用范围", "frame", [["", "整个探测器"], ...doc.frames.map(frame => [frame.id, frame.filename])], data.frame || "", true);
+    fields += pick(isSky ? "样本适用" : "应用范围", "frame",
+      [["", isSky ? "整组（随曝光位移换算）" : "整个探测器"], ...doc.frames.map(frame => [frame.id, frame.filename])],
+      data.frame || "", true);
+    if (isSky) fields += '<p class="help wide">只把这块矩形当作天空。周围样本不够、或与另一块趋势冲突的地方会保留原像素。</p>';
   }
   if (original) {
     fields += action("删除区域", "delete-region", {style: "tiny danger", attrs: `data-id="${original.id}" data-kind="${kind}"`});
   }
-  valueEditor(isAperture ? "参考坐标孔径" : "原生坐标坏区", fields, async payload => {
+  valueEditor(isAperture ? "参考坐标孔径" : isSky ? "确认空天样本" : "原生坐标坏区", fields, async payload => {
     const suffix = `/regions/${kind}${original ? "/" + original.id : ""}`;
     const next = await request(currentPath(suffix), {method: original ? "PATCH" : "POST", data: mutableOptions(payload)});
     await updateDocument(next);
@@ -440,17 +444,30 @@ async function overlayClick(event, canvas) {
     regionEditor("apertures", null, {x: fmt(point.x, 2), y: fmt(point.y, 2)});
     return;
   }
+  if (tool === "sky" && frame !== doc.reference && doc.alignments[frame]) {
+    const offset = doc.alignments[frame];
+    point.x -= offset.dx;
+    point.y -= offset.dy;
+  }
   if (session.points.length >= 2) session.points = [];
   session.points.push(point);
   repaint();
   if (session.points.length < 2) return;
   const [a, b] = session.points;
-  if (tool === "mask") {
-    regionEditor("masks", null, {
+  if (tool === "mask" || tool === "sky") {
+    const box = {
       left: Math.floor(Math.min(a.x, b.x)), top: Math.floor(Math.min(a.y, b.y)),
       right: Math.floor(Math.max(a.x, b.x)) + 1, bottom: Math.floor(Math.max(a.y, b.y)) + 1,
-      frame,
-    });
+    };
+    if (tool === "sky") {
+      regionEditor("sky_samples", null, {
+        ...box,
+        label: `空天 ${session.doc.sky_samples.length + 1}`,
+        frame: null,
+      });
+    } else {
+      regionEditor("masks", null, {...box, frame});
+    }
     return;
   }
   const coordinates = {x0: a.x, y0: a.y, x1: b.x, y1: b.y};
@@ -728,7 +745,7 @@ const actions = {
   },
   "photometry-settings": photoSettings,
   "edit-region": ({id, kind}) => regionEditor(kind, view().doc[kind].find(item => item.id === id)),
-  "add-region": ({kind}) => regionEditor(kind === "aperture" ? "apertures" : "masks"),
+  "add-region": ({kind}) => regionEditor(kind === "aperture" ? "apertures" : kind === "sky" ? "sky_samples" : "masks"),
   "delete-region": ({id, kind}) => confirmDelete("该区域将从当前观测中移除。", async () => {
     const result = await request(currentPath(`/regions/${kind}/${id}`) + queryCurrent(), {method: "DELETE"});
     await updateDocument(result);

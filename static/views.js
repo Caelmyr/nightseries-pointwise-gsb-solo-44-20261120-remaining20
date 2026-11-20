@@ -88,15 +88,16 @@ function exposureDetails(view, frame) {
 }
 
 function inspectTools(view, frame) {
-  const state = {pixel: "读像素", aperture: "选孔径", profile: "像素剖面", mask: "框选坏区"};
+  const state = {pixel: "读像素", aperture: "选孔径", profile: "像素剖面", mask: "框选坏区", sky: "框选空天"};
   const native = view.stream !== "aligned";
   const coordinateNote = view.tool === "mask" ? "在原生影像选取两个对角点，坏区作用于当前曝光或整个探测器。"
+    : view.tool === "sky" ? "在影像中框选你已确认没有星云的空天，仅这些矩形参与局部背景估计。"
     : view.tool === "profile" ? "选取两个端点，显示并可下载中间的像素值。" : "";
   const legend = `<div class="legend-inline"><span><i class="target"></i>目标</span><span><i class="comparison"></i>比较</span><span><i class="check"></i>检查</span></div>`;
   const buttons = Object.entries(state).map(([key, label]) => action(label, "tool", {
     style: `tiny ${view.tool === key ? "primary" : "ghost"}`,
     attrs: `data-tool="${key}"`,
-    disabled: key === "mask" && (!native || frame.kind !== "science") || key === "aperture" && frame.kind !== "science",
+    disabled: (key === "mask" || key === "sky") && (!native || frame.kind !== "science") || key === "aperture" && frame.kind !== "science",
   })).join("");
   const quick = action("分布直方图", "histogram", {style: "tiny ghost"}) +
     action(view.stars?.length ? "清除检星" : "显示星点", "stars", {style: "tiny ghost"}) +
@@ -113,7 +114,7 @@ export function inspection(view) {
     return panel("曝光影像", box("导入科学曝光或点选左侧合成星场。"), {controls: action("导入曝光", "upload", {style: "primary"})});
   }
   return `<div class="workspace-grid"><div class="column">${selectedPreview(view, frame)}</div>
-    <div class="column">${exposureDetails(view, frame)}${inspectTools(view, frame)}</div></div>`;
+    <div class="column">${exposureDetails(view, frame)}${inspectTools(view, frame)}${regionPanel(view, "sky_samples")}</div></div>`;
 }
 
 function exposureTable(view, frames, isCal) {
@@ -158,16 +159,19 @@ export function acquisition(view) {
 function regionPanel(view, key) {
   const document = view.doc;
   const aperture = key === "apertures";
-  const label = aperture ? "孔径列表" : "探测器坏区";
-  const code = aperture ? "aperture" : "mask";
+  const samples = key === "sky_samples";
+  const label = aperture ? "孔径列表" : samples ? "已确认空天样本" : "探测器坏区";
+  const code = aperture ? "aperture" : samples ? "sky" : "mask";
   const list = document[key];
   const body = list.length ? `<ul class="region-list">${list.map(item => {
     const range = aperture ? `${roles[item.role]} · ${fmt(item.x, 1)}, ${fmt(item.y, 1)}`
+      : samples ? `${fmt(item.left, 0)},${fmt(item.top, 0)} → ${fmt(item.right, 0)},${fmt(item.bottom, 0)} · ${item.frame ? "单帧" : "全组"}`
       : `${fmt(item.left, 0)},${fmt(item.top, 0)} → ${fmt(item.right, 0)},${fmt(item.bottom, 0)} · ${item.frame ? "单帧" : "全组"}`;
     return `<li><span><b>${E(item.label)}</b><small>${E(range)}</small></span>
       ${action("编辑", "edit-region", {style: "tiny ghost", attrs: `data-id="${item.id}" data-kind="${key}"`})}</li>`;
-  }).join("")}</ul>` : box(aperture ? "可在图面点选圆心，或输入参考帧坐标。" : "暂无人工掩膜。");
-  return panel(label, body, {controls: action(aperture ? "加孔径" : "加坏区", "add-region", {
+  }).join("")}</ul>` : box(aperture ? "可在图面点选圆心，或输入参考帧坐标。"
+    : samples ? "在影像阅览用「框选空天」圈出确认的空天，只用这些地方估计背景。" : "暂无人工掩膜。");
+  return panel(label, body, {controls: action(aperture ? "加孔径" : samples ? "加空天样本" : "加坏区", "add-region", {
     style: "tiny", attrs: `data-kind="${code}"`, disabled: !document.reference,
   })});
 }

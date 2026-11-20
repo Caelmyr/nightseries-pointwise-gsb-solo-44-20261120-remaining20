@@ -8,6 +8,7 @@ export const sources = {raw: "原始像素", calibrated: "校准后", aligned: "
 const reasons = {
   measured: "已测量", retained: "保留原值", unreliable: "峰值存疑", unavailable: "不可用",
   unaligned: "待对准", insufficient_aperture: "孔径覆盖不足", insufficient_sky: "背景环不足",
+  insufficient_sample: "空天样本不足", conflict: "样本趋势冲突", supported: "有依据扣除",
   saturated: "饱和", nonpositive: "净光度不为正", few_stars: "少星", broad_stars: "星点过宽",
   elongated: "拖尾", masked: "掩膜面积大", no_support: "有效像素不足", manual: "手工", automatic: "自动", reference: "基准",
 };

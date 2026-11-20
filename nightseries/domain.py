@@ -11,6 +11,7 @@ MAX_ASSET_BYTES = 10 * 1024 * 1024
 MAX_SERIES_BYTES = 96 * 1024 * 1024
 MAX_APERTURES = 20
 MAX_MASKS = 32
+MAX_SKY_SAMPLES = 8
 MAX_SERIES = 50
 MAX_SNAPSHOTS = 30
 
@@ -218,6 +219,25 @@ def mask_value(value, dimensions):
     }
 
 
+def sky_sample_value(value, dimensions):
+    data = object_value(value, "空天样本")
+    left, top = dimensions.xy(data.get("left"), data.get("top"))
+    right = number(data.get("right"), "空天样本右边界", 1, dimensions.width)
+    bottom = number(data.get("bottom"), "空天样本下边界", 1, dimensions.height)
+    if right - left < 2 or bottom - top < 2:
+        raise DomainError("空天样本需覆盖至少 2 × 2 像素")
+    if (right - left) * (bottom - top) < 64:
+        raise DomainError("空天样本面积过小，至少要 8 × 8 像素")
+    return {
+        "label": text(data.get("label"), "空天样本名称", 50),
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+        "frame": identifier(data["frame"], "空天样本曝光") if data.get("frame") else None,
+    }
+
+
 def alignment_value(value):
     data = object_value(value, "对准偏移")
     return {
@@ -259,6 +279,7 @@ def new_document(name, synthetic=False):
         "alignments": {},
         "apertures": [],
         "masks": [],
+        "sky_samples": [],
         "photometry": photometry_settings({}),
         "calibration": calibration_settings({}),
         "stretch": stretch_value({}),

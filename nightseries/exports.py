@@ -7,10 +7,10 @@ from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from .astrometry import catalog_rows, fit_sky_solution
 from .domain import (
-    MAX_APERTURES, MAX_ASSET_BYTES, MAX_FRAMES, MAX_MASKS, MAX_SERIES_BYTES, MAX_SNAPSHOTS,
-    DomainError, alignment_value, aperture_value, boolean, calibration_settings,
+    MAX_APERTURES, MAX_ASSET_BYTES, MAX_FRAMES, MAX_MASKS, MAX_SERIES_BYTES, MAX_SKY_SAMPLES,
+    MAX_SNAPSHOTS, DomainError, alignment_value, aperture_value, boolean, calibration_settings,
     identifier, integer, iso_time, list_value, mask_value, new_document, number,
-    object_value, photometry_settings, stretch_value, text,
+    object_value, photometry_settings, sky_sample_value, stretch_value, text,
 )
 from .store import Store
 
@@ -159,8 +159,9 @@ def validated_saved_state(doc, prepared):
         raise DomainError("无科学曝光的观测包不能登记基准")
     apertures = list_value(doc.get("apertures"), "孔径", MAX_APERTURES)
     masks = list_value(doc.get("masks"), "掩膜", MAX_MASKS)
+    samples = list_value(doc.get("sky_samples", []), "空天样本", MAX_SKY_SAMPLES)
     offsets = object_value(doc.get("alignments"), "对准偏移")
-    if (apertures and not reference) or (masks and dims is None):
+    if (apertures and not reference) or (masks and dims is None) or (samples and dims is None):
         raise DomainError("观测包中的区域缺少对应影像")
     safe_aps = []
     for row in apertures:
@@ -178,6 +179,15 @@ def validated_saved_state(doc, prepared):
         safe_masks.append(item)
     if len({row["id"] for row in safe_masks}) != len(safe_masks):
         raise DomainError("观测包的掩膜编号重复")
+    safe_samples = []
+    for row in samples:
+        item = sky_sample_value(row, dims)
+        item["id"] = identifier(row.get("id"), "空天样本")
+        if item["frame"] is not None and item["frame"] not in frames:
+            raise DomainError("观测包中的空天样本引用不存在的曝光")
+        safe_samples.append(item)
+    if len({row["id"] for row in safe_samples}) != len(safe_samples):
+        raise DomainError("观测包的空天样本编号重复")
     safe_offsets = {}
     for frame, row in offsets.items():
         if frame not in frames or frame == reference:
@@ -203,6 +213,7 @@ def validated_saved_state(doc, prepared):
         "catalog": catalog,
         "apertures": safe_aps,
         "masks": safe_masks,
+        "sky_samples": safe_samples,
         "alignments": safe_offsets,
         "notes": text(doc.get("notes", ""), "观测备注", 350, required=False),
         "photometry": photometry_settings(doc.get("photometry")),

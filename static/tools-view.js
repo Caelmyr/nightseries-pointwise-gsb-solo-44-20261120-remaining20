@@ -75,10 +75,24 @@ function plateAuditResult({data, images}) {
 }
 
 function backgroundResult({data, images}) {
-  return `${overview(data, [["valid_tiles", "拟合背景块"], ["range", "拟合场跨度 ADU", rates], ["fit_rms_adu", "拟合误差 ADU", rates]])}
-    <div class="two-previews">${figures([[images.sky, "平滑天空背景"], [images.residual, "保留天体的残差图"]])}</div>
-    ${grid(["格", "背景 ADU", "支持", "拟合残差 ADU"], data.tiles.map(row =>
-      [row.column + ", " + row.row, rates(row.level), pct(row.support), rates(row.residual)]))}`;
+  const summary = overview(data, [["valid_tiles", data.sample === "anchors" ? "可用空天样本" : "拟合背景块"],
+    ["range", "拟合场跨度 ADU", rates], ["fit_rms_adu", "拟合误差 ADU", rates],
+    ...(data.sample === "anchors" ? [["supported_fraction", "有依据扣除范围", pct],
+      ["conflict_fraction", "样本趋势冲突", pct], ["retained_fraction", "保留原像素", pct]] : [])]);
+  const anchorRows = data.sample === "anchors" ? grid(["空天样本", "范围", "有效像素", "支持", "背景 ADU", "拟合误差 ADU", "状态"],
+    data.anchors.map(row => [E(row.label),
+      `${row.bounds[0]},${row.bounds[1]} → ${row.bounds[2]},${row.bounds[3]}`,
+      row.samples, pct(row.support), rates(row.level), rates(row.fit_rms),
+      flag(row.state) + (row.reason ? ` · ${E(row.reason)}` : "")])) : "";
+  const tileRows = data.tiles?.length ? grid(["格", "背景 ADU", "支持", "拟合残差 ADU"], data.tiles.map(row =>
+    [row.column + ", " + row.row, rates(row.level), pct(row.support), rates(row.residual)])) : "";
+  const supportCaption = data.sample === "anchors"
+    ? "青色：有样本依据的扣除范围（越亮表示邻近样本越多）· 橙色：两块空天趋势冲突，保留原值 · 深紫：距空天太远或无有效像素，保留原值 · 细框为所用空天样本"
+    : "青色：自动网格覆盖的有效像素 · 深紫：坏区与饱和像素";
+  return `${summary}
+    <div class="two-previews">${figures([[images.sky, "局部平滑天空背景"], [images.residual, "保留天体的残差图"]])}</div>
+    ${images.support ? figures([[images.support, supportCaption]]) : ""}
+    ${anchorRows}${tileRows}`;
 }
 
 function footprintResult({data, images}) {
@@ -185,11 +199,15 @@ export const definitions = {
       numeric("平场亮度允许差", "stability", o.stability ?? .025, .001, .10),
   },
   background: {
-    title: "天空背景图", route: (_, o) => `/exposures/${o.frame}/background`, result: backgroundResult, images: ["sky", "residual"],
+    title: "天空背景图", route: (_, o) => `/exposures/${o.frame}/background`, result: backgroundResult, images: ["sky", "residual", "support"],
     fields: (d, o, v) => framePick(d, "曝光", "frame", o.frame ?? selectedFrame(v)?.id) +
       pick("影像层", "stream", Object.entries(sources), o.stream ?? "calibrated") +
+      pick("背景样本", "sample", [["anchors", "只用我圈定的空天"], ["auto", "自动分割网格"]], o.sample ?? (d.sky_samples?.length ? "anchors" : "auto"), true) +
       pick("拟合阶次", "kind", [["plane", "平面"], ["curved", "二次面"]], o.kind ?? "plane") +
-      numeric("每边网格数", "tiles", o.tiles ?? 8, 4, 18, 1),
+      numeric("每边网格数（自动样本）", "tiles", o.tiles ?? 8, 4, 18, 1) +
+      numeric("局部照顾半径 px", "reach", o.reach ?? 64, 8, 512, 1) +
+      numeric("样本冲突阈值 σ", "conflict_limit", o.conflict_limit ?? 3.2, 1.5, 8) +
+      numeric("预测不确定度上限 / 样本噪声", "error_limit", o.error_limit ?? 1, .25, 4),
   },
   growth: {
     title: "孔径生长", route: "/growth", result: growthResult, csv: "aperture-growth.csv",

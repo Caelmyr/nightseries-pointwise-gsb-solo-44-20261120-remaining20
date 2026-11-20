@@ -1,7 +1,7 @@
 """HTTP entry points for image inspection adjuncts."""
 from flask import jsonify
 
-from .background import render_sky, sky_surface
+from .background import render_sky, render_support, sky_surface
 from .cutout import cutout_zip
 from .domain import enum
 from .exports import csv_bytes
@@ -75,10 +75,16 @@ def register_inspection_tools(api, service):
     def inspect_background(sid, frame):
         def compute(images, options):
             layer = enum(options.get("stream", "calibrated"), "背景图层", {"raw", "calibrated", "aligned"})
-            report, model, residual = sky_surface(preview_stream(images, frame, layer), options)
-            format = enum(options.get("format", "json"), "背景图输出", {"json", "sky", "residual"})
-            if format != "json":
-                return image_response(render_sky(model if format == "sky" else residual, format == "residual"))
+            report, model, residual, layers = sky_surface(
+                preview_stream(images, frame, layer), options, images.document, frame, layer
+            )
+            format = enum(options.get("format", "json"), "背景图输出", {"json", "sky", "residual", "support"})
+            if format == "sky":
+                return image_response(render_sky(model, False))
+            if format == "residual":
+                return image_response(render_sky(residual, True))
+            if format == "support":
+                return image_response(render_support(layers))
             return jsonify(report)
         return run(sid, compute)
 

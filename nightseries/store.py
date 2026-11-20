@@ -9,10 +9,10 @@ import sqlite3
 
 from .domain import (
     ASSET_KINDS, MAX_APERTURES, MAX_ASSET_BYTES, MAX_FRAMES, MAX_MASKS, MAX_SERIES,
-    MAX_SERIES_BYTES, MAX_SNAPSHOTS, DomainError, alignment_value, aperture_value,
+    MAX_SERIES_BYTES, MAX_SKY_SAMPLES, MAX_SNAPSHOTS, DomainError, alignment_value, aperture_value,
     calibration_metadata, calibration_settings, dimensions_of, enum, exposure_row,
     identifier, integer, mask_value, new_document, object_value, photometry_settings,
-    science_metadata, stretch_value, text,
+    science_metadata, sky_sample_value, stretch_value, text,
 )
 from .raster import read_image
 
@@ -284,6 +284,7 @@ class Store:
             frame_list.remove(frame)
             doc["alignments"].pop(frame_id, None)
             doc["masks"] = [mask for mask in doc["masks"] if mask["frame"] != frame_id]
+            doc["sky_samples"] = [sample for sample in doc.get("sky_samples", []) if sample["frame"] != frame_id]
             if doc["reference"] == frame_id:
                 doc["reference"] = doc["frames"][0]["id"] if doc["frames"] else None
                 doc["alignments"] = {}
@@ -291,6 +292,7 @@ class Store:
             if not doc["frames"] and not doc["calibration_frames"]:
                 doc["dimensions"] = None
                 doc["masks"] = []
+                doc["sky_samples"] = []
             db.execute("DELETE FROM asset WHERE series_id=? AND id=?", (series_id, frame_id))
             return self._edit(db, doc)
 
@@ -348,7 +350,7 @@ class Store:
             return self._edit(db, doc)
 
     def change_region(self, series_id, version, kind, action, data=None, entry_id=None):
-        if kind not in {"apertures", "masks"}:
+        if kind not in {"apertures", "masks", "sky_samples"}:
             raise DomainError("未知区域类型")
         with self.session(write=True) as db:
             doc = self._row(db, series_id)
@@ -356,9 +358,9 @@ class Store:
             dims = dimensions_of(doc)
             if kind == "apertures" and doc["reference"] is None:
                 raise DomainError("请先建立科学曝光基准")
-            entries = doc[kind]
+            entries = doc.setdefault(kind, [])
             if action == "add":
-                maximum = MAX_APERTURES if kind == "apertures" else MAX_MASKS
+                maximum = {"apertures": MAX_APERTURES, "masks": MAX_MASKS, "sky_samples": MAX_SKY_SAMPLES}[kind]
                 if len(entries) >= maximum:
                     raise DomainError(f"该类区域最多保存 {maximum} 个")
                 old = None
@@ -374,8 +376,12 @@ class Store:
                 region = aperture_value(merged, dims)
                 if any(entry is not old and entry["label"] == region["label"] for entry in entries):
                     raise DomainError("同一观测组的孔径标签须唯一")
-            else:
+            elif kind == "masks":
                 region = mask_value(merged, dims)
+                if region["frame"]:
+                    exposure_row(doc, region["frame"])
+            else:
+                region = sky_sample_value(merged, dims)
                 if region["frame"]:
                     exposure_row(doc, region["frame"])
             if old is None:
