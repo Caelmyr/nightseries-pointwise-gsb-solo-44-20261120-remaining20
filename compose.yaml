@@ -1,0 +1,17 @@
+name: solo47-nightseries
+services:
+  nightseries:
+    build: .
+    image: solo47-nightseries:1.0
+    network_mode: bridge
+    ports:
+      - "127.0.0.1:${NIGHTSERIES_PORT:-18947}:8000"
+    volumes:
+      - observations:/var/lib/nightseries
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200"]
+      interval: 4s
+      timeout: 5s
+      retries: 8
+volumes:
+  observations:

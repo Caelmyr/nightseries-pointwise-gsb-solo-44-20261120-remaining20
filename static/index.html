@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10131d">
+  <title>NightSeries · 曝光工作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="NightSeries 工作台">
+    <span class="logo" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span><b>NightSeries</b><small>时序曝光工作台</small></span>
+  </a>
+  <div class="head-right"><span class="health"><b></b> 本机运行</span><span class="head-rule"></span><code>UTC</code></div>
+</header>
+<div class="shell">
+  <aside class="sidebar" aria-label="观测库">
+    <div class="sidebar-title"><h2>观测库</h2><button class="muted icon" data-action="reload" title="刷新观测库" aria-label="刷新观测库">↻</button></div>
+    <div id="series-nav" class="series-nav"></div>
+    <button class="button primary sidebar-button" data-action="new">＋ 新建观测</button>
+    <label class="button ghost sidebar-button import-label">导入观测包<input type="file" id="bundle-in" accept=".zip" aria-label="导入观测包"></label>
+    <section class="examples" aria-label="合成演示">
+      <div class="section-label">合成演示</div>
+      <button data-action="demo" data-scenario="variable"><span class="demo-dot a"></span><span>疏散星场<small>V 波段 · 孔径曲线</small></span><b>↗</b></button>
+      <button data-action="demo" data-scenario="tracking"><span class="demo-dot b"></span><span>导星漂移<small>R 波段 · 曝光对准</small></span><b>↗</b></button>
+    </section>
+    <div class="sidebar-footer"><span>本机观测库</span><span>FITS / TIFF / PNG</span></div>
+  </aside>
+  <main id="workspace" aria-label="当前观测"></main>
+</div>
+<dialog id="editor" aria-labelledby="dialog-title"></dialog>
+<div id="message" role="status" aria-live="polite"></div>
+</body>
+</html>
