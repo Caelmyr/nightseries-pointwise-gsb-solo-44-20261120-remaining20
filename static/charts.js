@@ -71,7 +71,7 @@ export function curveChart(canvas, curve, activeId) {
   const samples = curve.rows;
   const measures = samples.flatMap(row => [row.target, row.check]).filter(row => row?.state === "measured");
   if (!measures.length) {
-    noData(canvas, "没有同时可用的目标／比较观测");
+    noData(canvas, "没有可量测的目标／参照观测");
     return;
   }
   const timestamps = samples.map(row => row.time_seconds);

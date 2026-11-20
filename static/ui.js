@@ -10,6 +10,9 @@ const reasons = {
   unaligned: "待对准", insufficient_aperture: "孔径覆盖不足", insufficient_sky: "背景环不足",
   saturated: "饱和", nonpositive: "净光度不为正", few_stars: "少星", broad_stars: "星点过宽",
   elongated: "拖尾", masked: "掩膜面积大", no_support: "有效像素不足", manual: "手工", automatic: "自动", reference: "基准",
+  unlinked: "参照接不上", used: "已用于参照", not_used: "未用于参照",
+  no_shared_exposure: "与主参照无共同曝光", single_shared_exposure: "仅一张共同曝光",
+  measurement_unavailable: "本帧读数不可用",
 };
 export const stateLabel = state => reasons[state] || state?.replace(/^target_/, "目标星：").replace(/^comparison_/, "比较星：").replace(/([：])(.+)$/, (_, a, b) => a + (reasons[b] || b)) || "—";
 export const fmt = (value, digits = 2) => value == null || !Number.isFinite(Number(value)) ? "—" : Number(value).toFixed(digits);
@@ -42,6 +45,12 @@ export function input(label, name, value = "", opts = {}) {
 }
 
 export const pick = (label, name, values, current, wide = false) => field(label, `<select name="${name}">${choose(values, current)}</select>`, wide);
+
+export function multiPick(label, name, values, current = [], wide = false) {
+  const selected = new Set(current);
+  const options = values.map(([value, text]) => `<option value="${E(value)}" ${selected.has(value) ? "selected" : ""}>${E(text)}</option>`).join("");
+  return field(label, `<select name="${name}" multiple size="${Math.min(6, Math.max(3, values.length))}">${options}</select>`, wide);
+}
 
 export const check = (label, name, value) => `<label class="check"><input type="checkbox" name="${name}" ${value ? "checked" : ""}>${E(label)}</label>`;
 

@@ -39,14 +39,23 @@ def photometry_csv(curve):
         "filename", "midpoint_utc", "exposure_seconds", "filter", "source", "role",
         "state", "native_x", "native_y", "coverage", "flux_adu", "flux_per_second",
         "uncertainty_per_second", "sky_adu", "sky_noise_adu", "differential_mag",
-        "differential_error", "differential_state",
+        "differential_error", "differential_state", "reference_state", "reference_mag",
+        "reference_error", "reference_sources", "reference_used", "reference_note",
     ]
     rows = []
     for frame in curve["rows"]:
+        reference = frame.get("reference") or {}
+        reference_state = reference.get("state")
+        used_entries = reference.get("comparisons") or []
+        used = " ".join(entry["label"] for entry in used_entries)
+        note = reference.get("note") or ""
         for measurement in frame["measurements"]:
             role = measurement["role"]
-            differential = (frame.get(role) or {}) if role != "comparison" else {}
+            differential = frame.get(role) or {} if role in {"target", "check"} else {}
             sky = measurement.get("background") or {}
+            is_used = role == "comparison" and any(
+                entry["id"] == measurement["source"] for entry in used_entries
+            )
             rows.append([
                 frame["filename"], frame["midpoint"], frame["exposure"], frame["band"],
                 measurement["label"], role, measurement["state"], measurement["native_x"],
@@ -54,6 +63,9 @@ def photometry_csv(curve):
                 measurement["flux_per_second"], measurement["uncertainty_per_second"],
                 sky.get("level"), sky.get("noise"), differential.get("magnitude"),
                 differential.get("error"), differential.get("state"),
+                reference_state, reference.get("magnitude"), reference.get("error"),
+                used, ("yes" if is_used else "no") if role == "comparison" else "",
+                note,
             ])
     return csv_bytes(columns, rows)
 

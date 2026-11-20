@@ -468,6 +468,10 @@ async function analysis(kind, data) {
   const session = view();
   const options = {...data};
   if (kind === "quality" && options.band === "all") delete options.band;
+  if (kind === "photometry") {
+    options.comparisons = [...(options.comparisons || [])];
+    delete options.comparison;
+  }
   const result = await request(currentPath(`/analysis/${kind}`), {method: "POST", data: mutableOptions(options)});
   withActive(session, () => {
     if (kind === "photometry") {
@@ -855,6 +859,10 @@ document.addEventListener("submit", event => {
   if (!["curve-form", "quality-form", "stack-form", "field-form"].includes(target.id)) return;
   event.preventDefault();
   const data = Object.fromEntries(new FormData(target));
+  if (target.id === "curve-form") {
+    data.comparisons = [...target.elements.comparisons.selectedOptions].map(option => option.value);
+    delete data.comparison;
+  }
   operate(() => {
     if (target.id === "field-form") {
       const key = view().fieldTool || "timeline";

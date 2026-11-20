@@ -1,5 +1,5 @@
 import {
-  E, action, apiPath, assetKinds, badge, box, check, choose, field, fmt, input, panel, pct, pick, queries,
+  E, action, apiPath, assetKinds, badge, box, check, choose, field, fmt, input, multiPick, panel, pct, pick, queries,
   roles, shortDate, sources, stateLabel, status, table, time,
 } from "./ui.js";
 
@@ -209,6 +209,16 @@ export function sourceChoices(doc) {
   ]));
 }
 
+function comparisonLabel(row) {
+  const used = (row.reference?.comparisons || []).map(entry => entry.label.split(" ")[0]);
+  const excluded = (row.reference?.unavailable || [])
+    .filter(entry => ["no_shared_exposure", "single_shared_exposure"].includes(entry.reason))
+    .map(entry => entry.label.split(" ")[0]);
+  if (used.length) return used.join("+") + (excluded.length ? `（另 ${excluded.join("、")} 未接上）` : "");
+  if (excluded.length) return `未接上：${excluded.join("、")}`;
+  return row.reference?.state === "unlinked" ? "参照接不上" : "—";
+}
+
 function curveRows(view, curve) {
   return curve.rows.map(row => ({
     cls: view.frame === row.frame ? "active" : "",
@@ -218,29 +228,53 @@ function curveRows(view, curve) {
       ...["target", "check"].map(role => row[role]?.state === "measured"
         ? `<span class="mono">${fmt(row[role].magnitude, 4)} ± ${fmt(row[role].error, 4)}</span>`
         : E(stateLabel(row[role]?.state))),
+      E(comparisonLabel(row)),
       status(stateLabel(row.target.state), row.target.state === "measured"),
     ],
   }));
+}
+
+function ensemblePanel(curve) {
+  const ensemble = curve.ensemble;
+  if (!ensemble) return "";
+  const members = ensemble.members.length
+    ? `<ul class="region-list">${ensemble.members.map(member => `<li><span><b>${E(member.label)}</b>
+      <small>${member.id === ensemble.anchor ? "基准比较星" : `相对基准 ${fmt(member.offset, 4)} 等`} · ±${fmt(member.offset_error, 4)}</small></span></li>`).join("")}</ul>`
+    : box("所选比较星没有共同可量测的曝光，无法建立参照。");
+  const excluded = ensemble.excluded.length
+    ? `<p class="help">未接入参照：${ensemble.excluded.map(entry =>
+      `${E(entry.label)}（${E(stateLabel(entry.reason))}，共同 ${entry.joint_frames} 张）`).join("；")}</p>`
+    : "";
+  const tails = curve.summary.unlinked
+    ? `<p class="help">${curve.summary.unlinked} 张曝光因参照接不上而留空，理由见逐帧表。</p>` : "";
+  return panel("共同亮度参照", `${members}${excluded}${tails}`, {
+    hint: `同一滤镜、同一曝光上共用的比较星组合。至少 ${ensemble.min_link_exposures} 张共同曝光才并入参照。`,
+  });
 }
 
 export function photometry(view) {
   const doc = view.doc;
   const options = sourceChoices(doc);
   const curve = view.curve;
-  const saved = view.curveOptions || {band: currentBand(doc)};
+  const saved = view.curveOptions || {band: currentBand(doc), comparisons: []};
+  const savedComparisons = saved.comparisons || (saved.comparison ? [saved.comparison] : options.comparison.slice(0, 1).map(entry => entry[0]));
   const controls = `<div class="actions">${action("保存结果", "save-result", {style: "tiny", attrs: 'data-kind="photometry"', disabled: !curve})}
     ${action("下载曲线 CSV", "result-csv", {style: "tiny ghost", attrs: 'data-kind="photometry"', disabled: !curve})}</div>`;
   const selection = `<form id="curve-form" class="forms">${pick("滤镜", "band", filters(doc), saved.band)}
-    ${pick("目标星", "target", options.target, saved.target)}${pick("比较星", "comparison", options.comparison, saved.comparison)}
+    ${pick("目标星", "target", options.target, saved.target)}
+    ${multiPick("比较星（可多选，同一曝光共用）", "comparisons", options.comparison, savedComparisons, true)}
     ${pick("检查星", "check", [["", "不使用"], ...options.check], saved.check)}
     <div class="wide actions"><button class="button primary" type="submit" ${options.target.length && options.comparison.length ? "" : "disabled"}>计算光度曲线</button>
-    ${action("孔径设置", "photometry-settings", {style: "ghost"})}</div></form>`;
-  const chart = curve ? `<div class="panel-body"><div class="legend-inline"><span><i class="target"></i>目标 − 比较</span>
-    <span><i class="check"></i>检查 − 比较</span><span>UTC · mag</span></div>
+    ${action("孔径设置", "photometry-settings", {style: "ghost"})}</div>
+    <p class="help wide">所选比较星在同一张曝光上都能量到时，按共同曝光把它们归入同一亮度参照；只有一张共同曝光的比较星不并入，曲线在该帧留空并注明原因。</p></form>`;
+  const legend = `<div class="legend-inline"><span><i class="target"></i>目标 − 参照</span>
+    <span><i class="check"></i>检查 − 参照</span><span>UTC · mag</span></div>`;
+  const chart = curve ? `<div class="panel-body">${legend}
     <canvas class="chart" id="curve-chart" aria-label="差分光度曲线"></canvas></div>
-    ${table(["曝光", "中点 UTC", "目标差分", "检查差分", "状态"], curveRows(view, curve))}` : box("选择孔径与滤镜，计算当前差分光度。");
+    ${table(["曝光", "中点 UTC", "目标差分", "检查差分", "本帧参照", "状态"], curveRows(view, curve))}` : box("选择孔径与滤镜，计算当前差分光度。");
   return `<div class="workspace-grid"><div class="column">
-    ${panel("差分光度曲线", chart, {hint: curve ? `${curve.summary.measured} / ${curve.summary.frames} 张曝光可量测` : "", controls, bare: true})}</div>
+    ${panel("差分光度曲线", chart, {hint: curve ? `${curve.summary.measured} / ${curve.summary.frames} 张曝光可量测` : "", controls, bare: true})}
+    ${curve ? ensemblePanel(curve) : ""}</div>
     <div class="column">${panel("本次光度测量", selection, {hint: "在原生曝光中落下参考坐标的孔径。"})}
     ${regionPanel(view, "apertures")}${curve ? measurements(view, curve) : ""}</div></div>`;
 }
@@ -248,9 +282,15 @@ export function photometry(view) {
 function measurements(view, curve) {
   const row = curve.rows.find(row => row.frame === view.frame) || curve.rows[0];
   if (!row) return "";
-  return panel("单帧孔径读数", table(["源点", "净 ADU/s", "覆盖", "背景 ADU"], row.measurements.map(measurement => ({
-    cells: [E(measurement.label), fmt(measurement.flux_per_second, 1), pct(measurement.coverage), fmt(measurement.background?.level, 1)],
-  }))), {hint: row.filename, bare: true});
+  const reference = row.reference || {};
+  const used = reference.comparisons || [];
+  const hint = used.length
+    ? `${row.filename} · 参照 ${used.map(entry => entry.label).join(" + ")} · 参照星等 ${fmt(reference.magnitude, 4)} ± ${fmt(reference.error, 4)}`
+    : `${row.filename} · ${reference.note || stateLabel(reference.state)}`;
+  return panel("单帧孔径读数", table(["源点", "净 ADU/s", "覆盖", "背景 ADU", "用于参照"], row.measurements.map(measurement => ({
+    cells: [E(measurement.label), fmt(measurement.flux_per_second, 1), pct(measurement.coverage), fmt(measurement.background?.level, 1),
+      measurement.role === "comparison" ? (used.some(entry => entry.id === measurement.source) ? status("是", true) : status("否", false)) : "—"],
+  }))), {hint, bare: true});
 }
 
 export function quality(view) {
@@ -301,7 +341,7 @@ export function archives(view) {
     <a class="button tiny ghost" href="${apiPath(view.doc.id, `/snapshots/${item.id}?format=csv`)}">导出 ↓</a></div></li>`).join("")}</ul>`;
   const result = archived?.result;
   const data = result ? panel(archived.label, archived.kind === "photometry"
-    ? `<canvas class="chart" id="archive-chart" aria-label="已保存光度曲线"></canvas>${table(["曝光", "中点 UTC", "目标差分", "检查差分", "状态"], curveRows(view, result))}`
+    ? `<canvas class="chart" id="archive-chart" aria-label="已保存光度曲线"></canvas>${table(["曝光", "中点 UTC", "目标差分", "检查差分", "本帧参照", "状态"], curveRows(view, result))}`
     : table(["曝光", "星点数", "FWHM px", "拖尾轴比"], result.rows.map(row => ({cells: [E(row.filename), E(row.stars_used), fmt(row.median_fwhm), fmt(row.median_elongation)]}))),
     {hint: `按保存时的结果查看 · 观测版本 r${archived.revision}`, controls: action("移除归档", "delete-archive", {style: "tiny danger", attrs: `data-id="${archived.id}"`})}) : "";
   return `<div class="column">${panel("已保存结果", body, {controls: action("刷新结果", "archives", {style: "tiny ghost"})})}${data}</div>`;
