@@ -38,6 +38,29 @@ SCENARIOS = {
             ("K-03 检查星", "check", 310.6, 222.2, 685.0),
         ),
     },
+    "nebula": {
+        "name": "N-047 · 三色星云",
+        "notes": "合成演示。B、V、R 三组科学曝光各 4 张、曝光时长不同；B 组画幅向右下偏移，"
+                 "右缘与底边缺少 B 覆盖；亮星在 R 组饱和；星云偏红、反射区偏蓝，另有一块接近噪声的淡斑。"
+                 "用于彩色合成演练。",
+        "seed": 6713,
+        "count": 12,
+        "band": "",
+        "bands": (
+            {"band": "V", "role": "green", "count": 4, "exposure": 50.0, "shift": (0, 0)},
+            {"band": "B", "role": "blue", "count": 4, "exposure": 75.0, "shift": (14, 11)},
+            {"band": "R", "role": "red", "count": 4, "exposure": 32.0, "shift": (-4, 3)},
+        ),
+        "sources": (
+            ("V-21 亮星", "target", 249.6, 96.4, 620.0),
+            ("C-07 比较星", "comparison", 118.3, 208.7, 710.0),
+            ("K-12 检查星", "check", 302.5, 158.2, 610.0),
+        ),
+        "bright": {
+            "x": 68.0, "y": 268.0, "sigma": 1.35,
+            "flux": {"B": 5200.0, "V": 9400.0, "R": 34000.0},
+        },
+    },
 }
 
 
@@ -152,18 +175,87 @@ def science_header(scenario, index, exposure, dx, dy):
 def calibration_assets(scenario, fields, rng):
     _, _, flat, bias, dark = fields
     prepared = []
+    flat_bands = [entry["band"] for entry in scenario.get("bands", ())] or [scenario["band"]]
     shots = (
-        ("bias", 0, "", bias, 2.1, 3),
-        ("dark", 60, "", bias + 60 * dark, 3.5, 3),
-        ("flat", 3, scenario["band"], bias + 3 * dark + 18500 * flat, 22, 3),
+        [("bias", 0, "", bias, 2.1, 3)]
+        + [("dark", 60, "", bias + 60 * dark, 3.5, 3)]
+        + [("flat", 3, band, bias + 3 * dark + 18500 * flat, 22, 1) for band in flat_bands]
     )
     for kind, exposure, band, values, noise, count in shots:
         for index in range(count):
             data = values + rng.normal(0, noise, size=values.shape)
             headers = {"EXPTIME": exposure, "FILTER": band, "BUNIT": "ADU", "IMAGETYP": kind}
-            filename = f"{kind}-{index + 1:02d}.fits"
+            filename = f"{kind}-{band + '-' if band else ''}{index + 1:02d}.fits"
             prepared.append(Store.prepare_asset(filename, make_fits(data, headers, unsigned=True), kind, {}))
     return prepared
+
+
+def nebula_rate(dx=0.0, dy=0.0):
+    """Extended emission pinned to reference coordinates, sampled at native (x+dx, y+dy).
+
+    Deliberately gives the field a clear red/blue structure: an H-alpha-like core, a
+    blue reflection lobe, a green rim, a dust lane, and one faint patch that stays
+    under the noise in two filters so the composite must fall back to grey there.
+    """
+    yy, xx = np.indices((HEIGHT, WIDTH), dtype=np.float64)
+    xx = xx - dx
+    yy = yy - dy
+    core = np.exp(-(((xx - 150) ** 2) / (2 * 22.0**2) + ((yy - 238) ** 2) / (2 * 20.0**2)))
+    halo = np.exp(-(((xx - 140) ** 2) / (2 * 62.0**2) + ((yy - 244) ** 2) / (2 * 54.0**2)))
+    reflect = np.exp(-(((xx - 196) ** 2) / (2 * 27.0**2) + ((yy - 196) ** 2) / (2 * 19.0**2)))
+    rim = np.exp(-(((xx - 266) ** 2) / (2 * 17.0**2) + ((yy - 104) ** 2) / (2 * 15.0**2)))
+    faint = np.exp(-(((xx - 66) ** 2) / (2 * 21.0**2) + ((yy - 70) ** 2) / (2 * 18.0**2)))
+    knot = np.exp(-(((xx - 244) ** 2) / (2 * 2.3**2) + ((yy - 272) ** 2) / (2 * 2.3**2)))
+    lane = np.exp(-(((xx - 172) ** 2) / (2 * 9.0**2) + ((yy - 224) ** 2) / (2 * 34.0**2)))
+    clear = 1 - 0.78 * lane
+    blue = 1.1 * core * clear + 1.6 * halo + 11.0 * reflect + 1.3 * rim + 0.05 * faint + 16.0 * knot
+    green = 3.4 * core * clear + 1.4 * halo + 2.2 * reflect + 4.4 * rim + 0.09 * faint + 7.5 * knot
+    red = 11.5 * core * clear + 2.8 * halo + 0.7 * reflect + 1.1 * rim + 0.16 * faint + 0.9 * knot
+    return {"B": np.maximum(blue, 0), "V": np.maximum(green, 0), "R": np.maximum(red, 0)}
+
+
+def star_tints(count, rng):
+    palette = ((1.45, 1.0, 0.62), (1.0, 1.0, 1.0), (0.78, 0.95, 1.16), (0.52, 0.86, 1.42))
+    weights = (0.22, 0.46, 0.22, 0.10)
+    picks = rng.choice(len(palette), size=count, p=weights)
+    return [palette[index] for index in picks]
+
+
+def spectral_exposure(scenario, spec, index, fields, catalog, tints, rng, drift):
+    yy, xx, flat, bias, dark = fields
+    band = spec["band"]
+    band_index = {"B": 0, "V": 1, "R": 2}[band]
+    exposure = spec["exposure"]
+    dx = drift["dx"] + spec["shift"][0]
+    dy = drift["dy"] + spec["shift"][1]
+    # Each filter sees its own sky brightness and gradient, as a real run does.
+    sky_level = {"B": 13.6, "V": 11.2, "R": 9.4}[band]
+    sky_slope = {"B": 2.3, "V": 1.5, "R": 1.1}[band]
+    sky_phase = {"B": 0.35, "V": 0.62, "R": 0.9}[band]
+    sky = sky_level + 0.09 * index + sky_slope * (xx / WIDTH)
+    sky += 0.6 * np.cos((yy + sky_phase * xx) / 71 + index * 0.1)
+    sky += 0.4 * np.sin((yy - xx) / 97 + sky_phase)
+    signal = (sky + nebula_rate(dx, dy)[band]) * exposure
+    for (x, y, strength), tint in zip(catalog, tints):
+        insert_star(signal, x + dx, y + dy, strength * tint[band_index] * exposure, 1.22, 1.30, 0.1)
+    for label, role, x, y, strength in scenario["sources"]:
+        tint = (0.95, 0.98, 1.02)[band_index]
+        insert_star(signal, x + dx, y + dy, strength * tint * exposure, 1.2, 1.28, 0.12)
+    bright = scenario["bright"]
+    insert_star(
+        signal, bright["x"] + dx, bright["y"] + dy,
+        bright["flux"][band] * exposure, bright["sigma"], bright["sigma"] * 1.04, 0.08,
+    )
+    detector = bias + dark * exposure + flat * signal
+    detector += rng.normal(0, np.sqrt(np.maximum(1, flat * signal)) * 0.41 + 2.5)
+    for _ in range(4):
+        row, column = rng.integers(3, HEIGHT - 3), rng.integers(3, WIDTH - 3)
+        detector[row, column] += rng.uniform(450, 7400)
+    return detector, exposure, dx, dy
+
+
+def spectral_header(scenario, spec, index, exposure, dx, dy):
+    return science_header({**scenario, "band": spec["band"]}, index, exposure, dx, dy)
 
 
 def make_demo(scenario_id, store):
@@ -173,14 +265,29 @@ def make_demo(scenario_id, store):
     catalog = star_catalog(scenario, rng)
     prepared = []
     alignments = {}
-    for index in range(scenario["count"]):
-        pixels, exposure, dx, dy = synthetic_exposure(scenario, scenario_id, index, fields, catalog, rng)
-        filename = f"field-{scenario['band']}-{index + 1:02d}.fits"
-        body = make_fits(pixels, science_header(scenario, index, exposure, dx, dy), unsigned=True)
-        model = Store.prepare_asset(filename, body, "science", {})
-        prepared.append(model)
-        if scenario_id == "variable" and index:
-            alignments[model[0]["id"]] = {"dx": dx, "dy": dy, "source": "manual"}
+    if "bands" in scenario:
+        tints = star_tints(len(catalog), rng)
+        drift = {"dx": 0.0, "dy": 0.0}
+        for spec in scenario["bands"]:
+            for index in range(spec["count"]):
+                pixels, exposure, dx, dy = spectral_exposure(
+                    scenario, spec, index, fields, catalog, tints, rng, drift,
+                )
+                filename = f"field-{spec['band']}-{index + 1:02d}.fits"
+                header = spectral_header(scenario, spec, len(prepared), exposure, dx, dy)
+                model = Store.prepare_asset(filename, make_fits(pixels, header, unsigned=True), "science", {})
+                prepared.append(model)
+                alignments[model[0]["id"]] = {"dx": dx, "dy": dy, "source": "manual"}
+            drift = {"dx": drift["dx"] + 0.55, "dy": drift["dy"] - 0.35}
+    else:
+        for index in range(scenario["count"]):
+            pixels, exposure, dx, dy = synthetic_exposure(scenario, scenario_id, index, fields, catalog, rng)
+            filename = f"field-{scenario['band']}-{index + 1:02d}.fits"
+            body = make_fits(pixels, science_header(scenario, index, exposure, dx, dy), unsigned=True)
+            model = Store.prepare_asset(filename, body, "science", {})
+            prepared.append(model)
+            if scenario_id == "variable" and index:
+                alignments[model[0]["id"]] = {"dx": dx, "dy": dy, "source": "manual"}
     prepared.extend(calibration_assets(scenario, fields, rng))
     doc = new_document(scenario["name"], synthetic=True)
     initial = {

@@ -8,6 +8,7 @@ from flask import Blueprint, Flask, Response, jsonify, request, send_file, send_
 from werkzeug.exceptions import HTTPException
 
 from .calibration import ObservationImages, calibration_status
+from .composite import compute_composite, download as composite_download, preview as composite_preview
 from .demo import SCENARIOS, make_demo
 from .domain import (
     ASSET_KINDS, MAX_ASSET_BYTES, MAX_FRAMES, MAX_SERIES_BYTES, STREAMS, DomainError,
@@ -442,6 +443,26 @@ def register_analysis(api, service):
 
 
 def register_integrations(api, service):
+    @api.post("/series/<sid>/composite")
+    def colour_composite(sid):
+        options = request_data()
+
+        def compute():
+            images = service.images(sid)
+            verify_computed(images.document, options)
+            report, pixels, label = compute_composite(images, options)
+            mode = enum(options.get("format", "json"), "彩色图输出", {"json", "preview", "download"})
+            if mode == "preview":
+                return image_response(composite_preview(report, pixels),
+                                      X_Colour_Covered=sum(row["pixels"] for row in report["counts"]
+                                                          if row["tone"] == "ok"))
+            if mode == "download":
+                return attachment(
+                    composite_download(report, pixels), "image/png", "colour-composite.png",
+                )
+            return jsonify(report)
+        return service.compute(compute)
+
     @api.post("/series/<sid>/stack")
     def stack_report(sid):
         options = request_data()

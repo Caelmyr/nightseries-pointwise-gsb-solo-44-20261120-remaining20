@@ -2,7 +2,6 @@ import {
   E, action, apiPath, assetKinds, badge, box, check, choose, field, fmt, input, panel, pct, pick, queries,
   roles, shortDate, sources, stateLabel, status, table, time,
 } from "./ui.js";
-
 export const tabs = {
   inspect: "影像阅览", acquisition: "采集与校准", alignment: "对准与差分",
   photometry: "孔径光度", quality: "曝光质检", stack: "叠加", field: "核验工具", archives: "结果归档",
@@ -271,6 +270,77 @@ export function quality(view) {
     ${action("下载质检 CSV", "result-csv", {style: "tiny ghost", attrs: 'data-kind="quality"', disabled: !rows.length})}</div>`})}</div>`;
 }
 
+export function stackBands(doc) {
+  return [...new Set(doc.frames.filter(frame => frame.enabled).map(frame => frame.band))].sort();
+}
+
+export function colourDefaults(doc) {
+  const bands = stackBands(doc);
+  const guess = {r: /^r/i, g: /^v|^g/i, b: /^b/i};
+  const used = new Set();
+  const pickBand = (role, fallback) => {
+    const hit = bands.find(band => guess[role].test(band) && !used.has(band));
+    return hit ?? bands[fallback] ?? "";
+  };
+  const red = pickBand("r", 0);
+  used.add(red);
+  const green = pickBand("g", 1);
+  used.add(green);
+  const blue = pickBand("b", 2);
+  return {r: red, g: green, b: blue};
+}
+
+function colourChannels(view, doc) {
+  const saved = view.colourOptions?.channels;
+  if (!Array.isArray(saved)) return colourDefaults(doc);
+  const byRole = Object.fromEntries(saved.map(row => [{red: "r", green: "g", blue: "b"}[row.role], row.filter]));
+  return {r: byRole.r || "", g: byRole.g || "", b: byRole.b || ""};
+}
+
+function compositePanel(view) {
+  const doc = view.doc;
+  const bands = stackBands(doc);
+  if (bands.length < 3) {
+    return panel("三色合成", box(bands.length
+      ? `当前只有 ${bands.length} 种滤镜参与（${bands.join("、") || "无"}）。三色合成需要三种不同滤镜的科学曝光。`
+      : "还没有参与计算的科学曝光。"), {hint: "把三种滤镜分别对应到红、绿、蓝通道。"});
+  }
+  const channels = colourChannels(view, doc);
+  const options = {mode: "median", min_support: 1, subtract_background: true, strength: 0.8, gain: 1, low: 1, high: 99.5, ...view.colourOptions};
+  const channelPick = (label, role) => `<label class="field">${label}<select name="${role}" data-colour-role="${role}">
+    ${choose(bands.map(band => [band, band || "无滤镜标签"]), channels[role])}</select></label>`;
+  const result = view.colour;
+  const counts = result ? result.counts.filter(row => row.pixels) : [];
+  return panel("三色合成", `<form id="composite-form" class="forms three">
+    ${channelPick("红通道滤镜", "r")}${channelPick("绿通道滤镜", "g")}${channelPick("蓝通道滤镜", "b")}
+    ${pick("像素合并方式", "mode", [["median", "中位"], ["mean", "均值"]], options.mode)}
+    ${input("最低覆盖帧数", "min_support", options.min_support, {type: "number", step: 1, min: 1, max: 48})}
+    ${check("扣除每帧天空背景", "subtract_background", options.subtract_background)}
+    ${input("着色强度 0–1", "strength", options.strength, {type: "number", step: .05, min: 0, max: 1})}
+    ${input("显示亮度增益", "gain", options.gain, {type: "number", step: .05, min: .05, max: 50})}
+    ${input("显示黑点百分位", "low", options.low, {type: "number", step: .5, min: 0, max: 99})}
+    ${input("显示白点百分位", "high", options.high, {type: "number", step: .1, min: .1, max: 100})}
+    <div class="actions wide"><button type="submit" class="button primary" ${doc.frames.length ? "" : "disabled"}>生成彩色图</button>
+    ${action("导出彩色 PNG", "colour-export", {style: "ghost", disabled: !result})}</div></form>
+    <p class="help">三个滤镜各自在曝光秒数上叠加，颜色是各波段实测率之比；亮度增益与黑白点只改显示亮度，不改变已测得的颜色关系。
+    三个波段都不可靠的地方按灰度显示可测形态，不把缺测当零。下载图附颜色证据图例。</p>
+    ${result ? `<div class="two-previews"><figure><img src="${result.preview}" alt="三波段彩色合成">
+      <figcaption>彩色合成 · R ${E(result.channels.r)} · G ${E(result.channels.g)} · B ${E(result.channels.b)}</figcaption></figure>
+      <figure class="legend-figure"><div class="evidence-legend">${counts.map(row => `<div class="evidence-row">
+        <span class="evidence-swatch ${row.tone}"></span><span class="evidence-name">${E(row.label)}</span>
+        <b class="mono">${pct(row.fraction)}</b></div>`).join("")}</div>
+      <figcaption>颜色证据构成 · 灰度处不着色</figcaption></figure></div>
+      ${table(["通道", "滤镜", "采用帧数", "曝光和 s", "天空噪声 ADU/s"], result.bands.map(row => ({cells: [
+        E({r: "红", g: "绿", b: "蓝"}[row.role]), E(row.band), String(row.frames),
+        fmt(row.exposure_seconds, 0), fmt(row.noise, 3)]})))}
+      ${result.bands.some(row => row.skipped.length) ? `<p class="help">${
+        result.bands.map(row => row.skipped.map(item => E(item.filename) + " " + stateLabel(item.state)).join(" · ")).filter(Boolean).join(" · ")}</p>` : ""}`
+    : ""}`, {
+    hint: "同一参考画幅内按滤镜分别叠加，再合成颜色。",
+    controls: result ? `<span class="pill cyan">${pct(result.counts.find(row => row.code === "covered")?.fraction)} 像素有完整颜色证据</span>` : "",
+  });
+}
+
 export function stacks(view) {
   const doc = view.doc;
   const opts = view.stackOptions || {band: currentBand(doc), mode: "mean", min_support: Math.min(2, doc.frames.length) || 1, subtract_background: false};
@@ -286,7 +356,7 @@ export function stacks(view) {
       <figcaption>覆盖图 · 0 到 ${stack.report.used.length} 帧</figcaption></figure></div>` : ""}`, {
     hint: "在固定参考画幅内合并已对准曝光。", controls: stack ? `<div class="actions">${action("科学图 FITS", "stack-export", {style: "tiny", attrs: 'data-format="fits"'})}
     ${action("覆盖图 FITS", "stack-export", {style: "tiny ghost", attrs: 'data-format="coverage_fits"'})}</div>` : "",
-  })}${stack ? panel("叠加依据", `<p class="help">合格画幅 ${pct(stack.report.qualified_fraction)} · 已用 ${stack.report.used.length} 张 · 未用 ${stack.report.skipped.length} 张</p>
+  })}${compositePanel(view)}${stack ? panel("叠加依据", `<p class="help">合格画幅 ${pct(stack.report.qualified_fraction)} · 已用 ${stack.report.used.length} 张 · 未用 ${stack.report.skipped.length} 张</p>
     ${table(["科学曝光", "覆盖", "ΔX / ΔY px"], stack.report.used.map(row => ({cells: [E(row.filename), pct(row.valid_fraction), row.offset.map(x => fmt(x)).join(" / ")]})))}
     ${stack.report.skipped.length ? `<p class="help">${stack.report.skipped.map(row => E(row.filename) + " " + stateLabel(row.state)).join(" · ")}</p>` : ""}`) : ""}</div>`;
 }

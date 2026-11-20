@@ -17,6 +17,7 @@ STACK_MODES = {"mean", "median", "exposure"}
 class StackProduct:
     plane: Plane
     coverage: np.ndarray
+    saturated: np.ndarray
     report: dict
 
 
@@ -55,11 +56,16 @@ def compute_stack(images, options):
     mode = enum(options.get("mode", "mean"), "叠加方式", STACK_MODES)
     min_support = integer(options.get("min_support", 2), "最低覆盖帧数", 1, len(frames))
     subtract_background = boolean(options.get("subtract_background", False), "扣除帧背景")
+    # "all" counts every frame where the pixel was on the detector, saturated or not,
+    # so a saturated pixel is reported as covered but unusable rather than absent.
+    coverage_mode = enum(options.get("coverage", "measured"), "覆盖计数方式", {"measured", "all"})
+    count_all = coverage_mode == "all"
     if len(frames) * images.dims.pixels > MAX_ACTIVE_PIXELS:
         raise DomainError("当前叠加超过 2400 万像素，先挂起部分科学曝光")
     if mode == "median" and len(frames) * images.dims.pixels > 12_000_000:
         raise DomainError("中位叠加当前最多 1200 万采样，可用均值处理更大一组")
     coverage = np.zeros(images.dims.shape, dtype=np.uint16)
+    saturated = np.zeros(images.dims.shape, dtype=np.uint16)
     totals = np.zeros(images.dims.shape, dtype=np.float64)
     weights = np.zeros(images.dims.shape, dtype=np.float64)
     planes = []
@@ -74,10 +80,13 @@ def compute_stack(images, options):
         plane = warp_to_reference(images.calibrated(frame_id), offset)
         rates, removed = _center_sky(plane, frame["exposure"], subtract_background)
         valid = np.isfinite(rates)
-        if not np.any(valid):
+        if not np.any(plane.valid) or (not count_all and not np.any(valid)):
             skipped.append({"frame": frame_id, "filename": frame["filename"], "state": "no_support"})
             continue
-        coverage += valid
+        # Saturation is counted only for frames that are actually used, so a skipped
+        # frame cannot make a pixel look covered-but-saturated.
+        saturated += plane.saturated.astype(np.uint16)
+        coverage += (plane.valid if count_all else valid)
         if mode == "median":
             planes.append(rates)
         else:
@@ -113,6 +122,7 @@ def compute_stack(images, options):
         "height": images.dims.height,
         "coverage_histogram": np.bincount(coverage.ravel(), minlength=len(used) + 1).tolist(),
         "qualified_fraction": float(np.mean(valid)),
+        "saturated_pixels": int(np.count_nonzero(saturated)),
         "unit": "ADU/s",
     }
-    return StackProduct(result, coverage, report)
+    return StackProduct(result, coverage, saturated, report)

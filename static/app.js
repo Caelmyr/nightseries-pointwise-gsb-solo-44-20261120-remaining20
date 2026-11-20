@@ -46,10 +46,11 @@ function resetResults(session) {
     releaseUrl(session.stack.image);
     releaseUrl(session.stack.coverage);
   }
+  releaseUrl(session.colour?.preview);
   releaseUrl(session.pairImage);
   for (const url of Object.values(session.toolResult?.images || {})) releaseUrl(url);
   Object.assign(session, {
-    curve: null, quality: null, calibration: null, stack: null, registration: null,
+    curve: null, quality: null, calibration: null, stack: null, colour: null, registration: null,
     pairImage: null, toolResult: null, stars: null, pixel: null, chart: null, profile: null, points: [],
   });
 }
@@ -524,6 +525,43 @@ async function stack(data) {
   });
 }
 
+function colourInputs(form) {
+  const values = Object.fromEntries(new FormData(form));
+  const data = {
+    channels: ["r", "g", "b"].map(role => ({role: {r: "red", g: "green", b: "blue"}[role], filter: values[role]})),
+    mode: values.mode,
+    min_support: values.min_support,
+    subtract_background: form.elements.subtract_background.checked,
+    strength: values.strength,
+    gain: values.gain,
+    low: values.low,
+    high: values.high,
+  };
+  return data;
+}
+
+async function composite(data) {
+  const session = view();
+  const path = currentPath("/composite");
+  const options = mutableOptions(data);
+  const report = await request(path, {method: "POST", data: options});
+  const image = await request(path, {method: "POST", data: {...options, format: "preview"}, type: "blob"});
+  withActive(session, () => {
+    releaseUrl(session.colour?.preview);
+    session.colour = {...report, preview: URL.createObjectURL(image)};
+    session.colourOptions = data;
+    render();
+  });
+}
+
+async function exportColour() {
+  const session = view();
+  const bytes = await request(currentPath("/composite"), {
+    method: "POST", data: mutableOptions({...session.colourOptions, format: "download"}), type: "blob",
+  });
+  download(bytes, "colour-composite.png");
+}
+
 async function exportStack(format) {
   const bytes = await request(currentPath("/stack"), {
     method: "POST", data: mutableOptions({...view().stackOptions, format}), type: "blob",
@@ -772,6 +810,7 @@ const actions = {
     await loadArchives();
   }),
   "stack-export": ({format}) => exportStack(format),
+  "colour-export": exportColour,
   "log-edit": editLog,
   "sky-catalog": editCatalog,
   "sky-plate": editPlate,
@@ -852,10 +891,11 @@ document.addEventListener("change", event => {
 
 document.addEventListener("submit", event => {
   const {target} = event;
-  if (!["curve-form", "quality-form", "stack-form", "field-form"].includes(target.id)) return;
+  if (!["curve-form", "quality-form", "stack-form", "composite-form", "field-form"].includes(target.id)) return;
   event.preventDefault();
   const data = Object.fromEntries(new FormData(target));
   operate(() => {
+    if (target.id === "composite-form") return composite(colourInputs(target));
     if (target.id === "field-form") {
       const key = view().fieldTool || "timeline";
       return runTool(key, toolInputs(target, key));
