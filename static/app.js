@@ -50,7 +50,7 @@ function resetResults(session) {
   for (const url of Object.values(session.toolResult?.images || {})) releaseUrl(url);
   Object.assign(session, {
     curve: null, quality: null, calibration: null, stack: null, registration: null,
-    pairImage: null, toolResult: null, stars: null, pixel: null, chart: null, profile: null, points: [],
+    pairImage: null, pairMatch: null, toolResult: null, stars: null, pixel: null, chart: null, profile: null, points: [],
   });
 }
 
@@ -363,11 +363,23 @@ async function compare() {
   const session = view();
   const pair = pairFromForm();
   stopBlink();
-  const path = currentPath(`/difference/${pair.a}/${pair.b}?` + queries({normalize: pair.normalize, version: session.doc.revision}));
-  const blob = await request(path, {type: "blob"});
+  const query = queries({normalize: pair.normalize, version: session.doc.revision});
+  if (pair.mode === "matched") {
+    const result = await request(currentPath(`/difference/${pair.a}/${pair.b}/matched?` + query));
+    withActive(session, () => {
+      releaseUrl(session.pairImage);
+      session.pairImage = null;
+      session.pairMatch = result;
+      session.pair = pair;
+      render();
+    });
+    return;
+  }
+  const blob = await request(currentPath(`/difference/${pair.a}/${pair.b}?` + query), {type: "blob"});
   withActive(session, () => {
     releaseUrl(session.pairImage);
     session.pairImage = URL.createObjectURL(blob);
+    session.pairMatch = null;
     session.pair = pair;
     render();
   });

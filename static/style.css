@@ -84,6 +84,7 @@ hr { border: 0; border-top: 1px solid var(--subtle); margin: 16px 0; }
 .demo-dot { height: 7px; width: 7px; border-radius: 50%; }
 .demo-dot.a { background: var(--cyan); }
 .demo-dot.b { background: #ac9bfe; }
+.demo-dot.c { background: var(--gold); }
 .sidebar-footer { margin-top: auto; padding: 35px 7px 2px; color: var(--dim); font-size: 10px; font-family: var(--mono); }
 .sidebar-footer span { display: block; margin-top: 4px; }
 .button {

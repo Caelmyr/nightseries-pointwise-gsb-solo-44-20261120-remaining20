@@ -38,6 +38,18 @@ SCENARIOS = {
             ("K-03 检查星", "check", 310.6, 222.2, 685.0),
         ),
     },
+    "trails": {
+        "name": "N-047 · 交差拖尾",
+        "notes": "合成演示。6 张 V 波段科学曝光，前三张横向拖尾、后三张纵向拖尾，后段出现一颗新星。",
+        "seed": 6108,
+        "count": 6,
+        "band": "V",
+        "sources": (
+            ("T-07 目标星", "target", 172.4, 131.6, 900.0),
+            ("C-15 比较星", "comparison", 250.2, 96.8, 790.0),
+            ("K-06 检查星", "check", 118.3, 216.9, 600.0),
+        ),
+    },
 }
 
 
@@ -93,15 +105,25 @@ def synthetic_exposure(scenario, scenario_id, index, fields, catalog, rng):
     if scenario_id == "tracking":
         dx = index * 0.83 + 0.6 * math.sin(index * 1.15)
         dy = index * -0.47 + math.sin(index / 2.2) * 0.55
+    elif scenario_id == "trails":
+        dx = 0.9 * math.sin(index * 1.31) + 0.3 * index
+        dy = 0.8 * math.cos(index * 1.07) - 0.2 * index
     else:
         dx = 2.4 * math.sin(index * 0.67) + index * 0.14
         dy = 2.1 * math.sin(index * 0.41) - index * 0.09
-    exposure = 42.0 if index % 3 == 0 else 48.0
+    exposure = 48.0 if scenario_id == "trails" else (42.0 if index % 3 == 0 else 48.0)
     transparency = 0.91 + 0.1 * math.cos(index * 0.43) - 0.18 * math.exp(-((index - 9.5) / 2.3)**2)
+    if scenario_id == "trails":
+        transparency = 0.96 + 0.02 * math.sin(index * 0.9)
     seeing = 1.25 + 0.13 * math.sin(index * 0.9)
     drifting = scenario_id == "tracking" and index > 10
-    minor, major = seeing, seeing * (1.85 if drifting else 1.04)
-    angle = 0.45 if drifting else 0.1
+    if scenario_id == "trails":
+        minor = 1.1 + 0.05 * math.sin(index * 0.8)
+        major = minor * 2.8
+        angle = 0.0 if index < 3 else math.pi / 2
+    else:
+        minor, major = seeing, seeing * (1.85 if drifting else 1.04)
+        angle = 0.45 if drifting else 0.1
     sky = 11 + index * 0.14 + 2 * (xx / WIDTH)
     sky += (2.5 if drifting else 0.7) * np.cos((yy + 0.34 * xx) / 63 + index * 0.08)
     signal = sky * exposure
@@ -115,6 +137,8 @@ def synthetic_exposure(scenario, scenario_id, index, fields, catalog, rng):
             strength * transparency * exposure * modulation,
             major, minor, angle,
         )
+    if scenario_id == "trails" and index >= 3:
+        insert_star(signal, 214.6 + dx, 158.4 + dy, 320 * transparency * exposure, major, minor, angle)
     detector = bias + dark * exposure + flat * signal
     detector += rng.normal(0, np.sqrt(np.maximum(1, flat * signal)) * 0.41 + 2.5)
     for _ in range(4):
@@ -179,7 +203,7 @@ def make_demo(scenario_id, store):
         body = make_fits(pixels, science_header(scenario, index, exposure, dx, dy), unsigned=True)
         model = Store.prepare_asset(filename, body, "science", {})
         prepared.append(model)
-        if scenario_id == "variable" and index:
+        if scenario_id in ("variable", "trails") and index:
             alignments[model[0]["id"]] = {"dx": dx, "dy": dy, "source": "manual"}
     prepared.extend(calibration_assets(scenario, fields, rng))
     doc = new_document(scenario["name"], synthetic=True)

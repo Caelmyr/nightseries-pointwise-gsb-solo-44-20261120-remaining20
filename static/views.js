@@ -172,6 +172,33 @@ function regionPanel(view, key) {
   })});
 }
 
+function differenceResult(view) {
+  const match = view.pairMatch;
+  if (match) {
+    const side = key => {
+      const row = match.sides[key];
+      return `<figure><img src="${row.kernel_image}" alt="${key.toUpperCase()} 补模糊核">
+        <figcaption>${key.toUpperCase()} 补模糊核 · ${row.kernel_size[0]}×${row.kernel_size[1]} px · FWHM ${fmt(row.kernel.fwhm_x, 1)} × ${fmt(row.kernel.fwhm_y, 1)} px</figcaption></figure>`;
+    };
+    return `<figure class="wide-preview"><img src="${match.image}" alt="星像匹配后的差分">
+      <figcaption>星像匹配差分 · 橙色为 A 较亮，蓝色为 B 较亮，紫色为匹配后无效。两图已互卷到共同星象 FWHM ${fmt(match.common.fwhm_x, 1)} × ${fmt(match.common.fwhm_y, 1)} px。</figcaption></figure>
+      <div class="two-previews">${side("a")}${side("b")}</div>
+      <div class="meta-list">
+        <div><span>A 原星象 FWHM</span><b>${fmt(match.sides.a.psf.fwhm_x, 1)} × ${fmt(match.sides.a.psf.fwhm_y, 1)} px</b></div>
+        <div><span>B 原星象 FWHM</span><b>${fmt(match.sides.b.psf.fwhm_x, 1)} × ${fmt(match.sides.b.psf.fwhm_y, 1)} px</b></div>
+        <div><span>流量比例 B→A</span><b>× ${fmt(match.scale, 4)}</b></div>
+        <div><span>差分零位</span><b>${fmt(match.offset, 2)} ADU</b></div>
+        <div><span>估计用星</span><b>${match.stars_used} 颗共同未饱和星</b></div>
+        <div><span>共同有效像素</span><b>${match.valid}</b></div>
+      </div>`;
+  }
+  if (view.pairImage) {
+    return `<figure class="wide-preview"><img src="${view.pairImage}" alt="两张已对准曝光的差分">
+     <figcaption>橙色为 A 较亮，蓝色为 B 较亮。紫色区域缺少共同覆盖。</figcaption></figure>`;
+  }
+  return "";
+}
+
 export function alignment(view) {
   const doc = view.doc;
   const labels = doc.frames.map(item => [item.id, item.filename]);
@@ -186,7 +213,7 @@ export function alignment(view) {
       action("改位移", "offset", {style: "tiny ghost", attrs: `data-id="${frame.id}"`, disabled: frame.id === doc.reference}),
     ]};
   });
-  const pair = view.pair || {a: chosen?.id, b: doc.frames.find(frame => frame.id !== chosen?.id)?.id, normalize: "median"};
+  const pair = view.pair || {a: chosen?.id, b: doc.frames.find(frame => frame.id !== chosen?.id)?.id, normalize: "median", mode: "direct"};
   return `<div class="workspace-grid"><div class="column">
     ${panel("参考帧位移", rows.length ? table(["曝光", "ΔX px", "ΔY px", "相似度", "状态", ""], rows) : box("请先导入科学曝光。"), {
       bare: true, hint: chosen ? `固定基准 · ${chosen.filename}` : "",
@@ -194,11 +221,11 @@ export function alignment(view) {
     })}</div><div class="column">
     ${panel("对准后差分", `<form id="comparison-form" class="forms">${pick("基准影像 A", "a", labels, pair.a)}
       ${pick("比对影像 B", "b", labels, pair.b)}${pick("差分零位", "normalize", [["median", "对齐两图背景"], ["none", "保留背景差"]], pair.normalize, true)}
+      ${pick("差分方式", "mode", [["direct", "直接差分"], ["matched", "星像匹配差分"]], pair.mode, true)}
       <div class="actions wide">${action("查看差分", "compare", {disabled: labels.length < 2})}
         ${action(view.blink ? "停止闪烁" : "闪烁浏览", "blink", {style: "ghost", disabled: labels.length < 2})}</div></form>
-      <div id="difference-output">${view.pairImage ? `<figure class="wide-preview"><img src="${view.pairImage}" alt="两张已对准曝光的差分">
-       <figcaption>橙色为 A 较亮，蓝色为 B 较亮。紫色区域缺少共同覆盖。</figcaption></figure>` : ""}</div>`,
-      {hint: "已对准图像，固定画幅。", controls: action("设置基准", "reference", {style: "tiny ghost", disabled: !labels.length})})}
+      <div id="difference-output">${differenceResult(view)}</div>`,
+      {hint: "已对准图像，固定画幅。星像匹配用两图共同的未饱和星估计星象，各自补卷积到共同星象后再做差。", controls: action("设置基准", "reference", {style: "tiny ghost", disabled: !labels.length})})}
   </div></div>`;
 }
 

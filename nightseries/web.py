@@ -16,6 +16,7 @@ from .domain import (
 from .exports import (
     ARCHIVE_LIMIT, photometry_csv, profile_csv, quality_csv, read_bundle, write_bundle,
 )
+from .matching import matched_preview
 from .photometry import light_curve
 from .preview import (
     difference_preview, inspect_pixel, raster_histogram, render_plane, sample_line,
@@ -362,6 +363,16 @@ def register_alignment(api, service):
                 summary["image"], X_Difference_Offset=summary["offset"],
                 X_Difference_Range=summary["limit"], X_Difference_Valid=summary["valid"],
             )
+        return service.compute(compare)
+
+    @api.get("/series/<sid>/difference/<a>/<b>/matched")
+    def compare_matched(sid, a, b):
+        def compare():
+            images = service.images(sid)
+            verify_computed(images.document, request.args)
+            norm = enum(request.args.get("normalize", "median"), "差分零位", {"median", "none"})
+            return jsonify(matched_preview(
+                preview_stream(images, a, "aligned"), preview_stream(images, b, "aligned"), norm))
         return service.compute(compare)
 
 

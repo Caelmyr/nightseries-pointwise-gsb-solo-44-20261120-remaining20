@@ -131,8 +131,7 @@ def difference_plane(a, b, normalizer="median"):
     return Plane(values, valid, np.zeros(a.values.shape, dtype=bool)), shift
 
 
-def difference_preview(a, b, normalizer):
-    plane, shift = difference_plane(a, b, normalizer)
+def render_difference(plane):
     samples = plane.values[plane.valid]
     amplitude = float(np.percentile(np.abs(samples), 99.5))
     amplitude = max(amplitude, 0.1)
@@ -144,4 +143,9 @@ def difference_preview(a, b, normalizer):
     rgb[~plane.valid] = [38, 24, 47]
     image = Image.fromarray(np.rint(rgb).astype(np.uint8), "RGB")
     image.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
-    return {"image": png(image), "offset": shift, "limit": amplitude, "valid": int(samples.size)}
+    return {"image": png(image), "limit": amplitude, "valid": int(samples.size)}
+
+
+def difference_preview(a, b, normalizer):
+    plane, shift = difference_plane(a, b, normalizer)
+    return {"offset": shift, **render_difference(plane)}
