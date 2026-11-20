@@ -276,19 +276,48 @@ export function stacks(view) {
   const opts = view.stackOptions || {band: currentBand(doc), mode: "mean", min_support: Math.min(2, doc.frames.length) || 1, subtract_background: false};
   const stack = view.stack;
   const modes = [["mean", "均值"], ["median", "中位"], ["exposure", "按曝光时间加权"]];
+  const legend = `<ul class="coverage-legend">
+    <li><i class="swatch uncovered"></i>从未覆盖</li>
+    <li><i class="swatch clean"></i>正常合并</li>
+    <li><i class="swatch rejected"></i>已拒绝亮斑样本</li>
+    <li><i class="swatch unresolved"></i>有图但无法可靠去斑</li></ul>`;
   return `<div class="column">${panel("对准叠加", `<form id="stack-form" class="forms three">${pick("滤镜", "band", filters(doc), opts.band)}
     ${pick("像素光度合并方式", "mode", modes, opts.mode)}
     ${input("最低覆盖帧数", "min_support", opts.min_support, {type: "number", step: 1, min: 1, max: 48})}
     ${check("扣除每帧天空中位水平", "subtract_background", opts.subtract_background)}
     <div class="actions"><button type="submit" class="button primary" ${doc.frames.length ? "" : "disabled"}>生成叠加</button></div></form>
     ${stack ? `<div class="two-previews"><figure><img src="${stack.image}" alt="合并后的科学曝光">
-      <figcaption>叠加图 · ADU/s</figcaption></figure><figure><img src="${stack.coverage}" alt="每像素的覆盖帧数">
-      <figcaption>覆盖图 · 0 到 ${stack.report.used.length} 帧</figcaption></figure></div>` : ""}`, {
-    hint: "在固定参考画幅内合并已对准曝光。", controls: stack ? `<div class="actions">${action("科学图 FITS", "stack-export", {style: "tiny", attrs: 'data-format="fits"'})}
-    ${action("覆盖图 FITS", "stack-export", {style: "tiny ghost", attrs: 'data-format="coverage_fits"'})}</div>` : "",
-  })}${stack ? panel("叠加依据", `<p class="help">合格画幅 ${pct(stack.report.qualified_fraction)} · 已用 ${stack.report.used.length} 张 · 未用 ${stack.report.skipped.length} 张</p>
-    ${table(["科学曝光", "覆盖", "ΔX / ΔY px"], stack.report.used.map(row => ({cells: [E(row.filename), pct(row.valid_fraction), row.offset.map(x => fmt(x)).join(" / ")]})))}
-    ${stack.report.skipped.length ? `<p class="help">${stack.report.skipped.map(row => E(row.filename) + " " + stateLabel(row.state)).join(" · ")}</p>` : ""}`) : ""}</div>`;
+      <figcaption>叠加图 · ADU/s · 仅由实际纳入样本生成</figcaption></figure><figure><img src="${stack.coverage}" alt="每像素实际纳入的覆盖帧数与去斑状态">
+      <figcaption>覆盖与去斑状态 · 0 到 ${stack.report.used.length} 帧</figcaption></figure></div>
+      ${legend}<p class="help">亮斑拒绝只依据重复图像的稳健偏差，不按单帧亮度排名；覆盖不足四帧的边缘保留全部现有样本并标记为无法可靠去斑。</p>` : ""}`, {
+    hint: "在固定参考画幅内合并已对准曝光，科学图与覆盖计数来自同一批实际纳入的样本。",
+    controls: stack ? `<div class="actions">${action("科学图 FITS", "stack-export", {style: "tiny", attrs: 'data-format="fits"'})}
+    ${action("覆盖帧数 FITS", "stack-export", {style: "tiny ghost", attrs: 'data-format="coverage_fits"'})}
+    ${action("去斑状态 FITS", "stack-export", {style: "tiny ghost", attrs: 'data-format="status_fits"'})}</div>` : "",
+  })}${stack ? stackEvidence(stack.report) : ""}</div>`;
+}
+
+function stackEvidence(report) {
+  const counts = report.status_counts;
+  const total = Object.values(counts).reduce((sum, value) => sum + value, 0) || 1;
+  const rows = [
+    ["从未覆盖", counts.uncovered, "uncovered"],
+    ["正常合并", counts.clean, "clean"],
+    ["已拒绝亮斑样本（像素）", counts.rejected, "rejected"],
+    ["有图但无法可靠去斑（像素）", counts.unresolved, "unresolved"],
+  ];
+  const summary = `<div class="stack-summary">${rows.map(([label, value, cls]) =>
+    `<span class="stack-stat ${cls}"><b>${value.toLocaleString()}</b><small>${label} · ${fmt(value / total * 100, 1)}%</small></span>`).join("")}</div>`;
+  const frameRows = report.used.map(row => ({cells: [
+    E(row.filename), pct(row.valid_fraction), row.offset.map(x => fmt(x)).join(" / "),
+    row.rejected_pixels ? badge(`${row.rejected_pixels} px`, "warn") : status("无", true),
+    pct(row.rejected_fraction),
+  ]}));
+  return panel("叠加依据", `<p class="help">合格画幅 ${pct(report.qualified_fraction)} · 已用 ${report.used.length} 张 · 未用 ${report.skipped.length} 张
+    · 拒绝样本 ${report.rejected_samples.toLocaleString()}（占原始采样 ${pct(report.rejected_sample_fraction)}）· 无法可靠去斑画幅占比 ${pct(report.unresolved_fraction)}</p>
+    ${summary}
+    ${table(["科学曝光", "有效覆盖", "ΔX / ΔY px", "拒绝亮斑", "拒绝占比"], frameRows)}
+    ${report.skipped.length ? `<p class="help">${report.skipped.map(row => E(row.filename) + " " + stateLabel(row.state)).join(" · ")}</p>` : ""}`);
 }
 
 export function archives(view) {

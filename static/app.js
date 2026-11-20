@@ -525,10 +525,11 @@ async function stack(data) {
 }
 
 async function exportStack(format) {
+  const names = {fits: "aligned-stack.fits", coverage_fits: "stack-support.fits", status_fits: "stack-support-status.fits"};
   const bytes = await request(currentPath("/stack"), {
     method: "POST", data: mutableOptions({...view().stackOptions, format}), type: "blob",
   });
-  download(bytes, format === "fits" ? "aligned-stack.fits" : "stack-support.fits");
+  download(bytes, names[format] || "stack.fits");
 }
 
 async function loadArchives() {

@@ -220,3 +220,23 @@ dialog .actions { justify-content: flex-end; margin-top: 18px; }
   .tabs { gap: 14px; }
   .stage { height: 350px; }
 }
+
+/* Stacking coverage states: palette mirrors coverage_preview() in stacking.py */
+.coverage-legend {
+  list-style: none; display: flex; flex-wrap: wrap; gap: 14px;
+  margin: 10px 0 4px; padding: 0; font-size: 11px; color: var(--muted);
+}
+.coverage-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.coverage-legend .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); }
+.coverage-legend .swatch.uncovered { background: rgb(13, 14, 22); }
+.coverage-legend .swatch.clean { background: rgb(52, 132, 142); }
+.coverage-legend .swatch.rejected { background: rgb(226, 118, 74); }
+.coverage-legend .swatch.unresolved { background: rgb(198, 162, 74); }
+.stack-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px; margin: 10px 0 12px; }
+.stack-stat { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; background: var(--panel2); display: flex; flex-direction: column; gap: 3px; }
+.stack-stat b { font-size: 18px; font-family: var(--mono); }
+.stack-stat small { color: var(--muted); font-size: 11px; }
+.stack-stat.clean b { color: var(--cyan); }
+.stack-stat.rejected b { color: rgb(226, 118, 74); }
+.stack-stat.unresolved b { color: var(--gold); }
+.stack-stat.uncovered b { color: var(--dim); }

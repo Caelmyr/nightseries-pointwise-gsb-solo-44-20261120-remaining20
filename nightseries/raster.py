@@ -142,8 +142,10 @@ def read_fits(blob):
         if type(blank) is not int:
             raise DomainError("FITS BLANK 必须为整数")
         invalid |= encoded == blank
-    scale = header_number(header, "BSCALE", 1.0)
-    zero = header_number(header, "BZERO", 0.0)
+    # BSCALE/BZERO cards are numeric regardless of whether they were written as
+    # integers (BSCALE=1, BZERO=32768) or floating point.
+    scale = float(header_number(header, "BSCALE", 1.0))
+    zero = float(header_number(header, "BZERO", 0.0))
     with np.errstate(over="ignore", invalid="ignore"):
         pixels = encoded.astype(np.float64) * scale + zero
     pixels[invalid | ~np.isfinite(pixels) | (np.abs(pixels) > 1e15)] = np.nan
@@ -209,7 +211,8 @@ def make_fits(pixels, headers=None, *, unsigned=False):
     encoded = b"".join(make_card(key, value) for key, value in header) + b"END".ljust(FITS_CARD)
     encoded = encoded.ljust(-(-len(encoded) // FITS_RECORD) * FITS_RECORD, b" ")
     if unsigned:
-        samples = (np.clip(np.rint(pixels), 0, 65535) - 32768).astype(">i2")
+        shifted = np.clip(np.rint(pixels.astype(np.float64)), 0, 65535) - 32768
+        samples = shifted.astype(">i2")
     else:
         samples = np.asarray(pixels, dtype=">f4")
     return encoded + samples.tobytes().ljust(-(-samples.nbytes // FITS_RECORD) * FITS_RECORD, b"\0")

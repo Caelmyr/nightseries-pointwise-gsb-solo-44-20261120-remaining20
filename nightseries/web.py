@@ -23,7 +23,10 @@ from .preview import (
 from .quality import frame_quality, quality_report
 from .raster import image_summary, make_fits
 from .registration import preview_stream, run_registration
-from .stacking import compute_stack, coverage_preview
+from .stacking import (
+    STATUS_CLEAN, STATUS_REJECTED, STATUS_UNCOVERED, STATUS_UNRESOLVED,
+    compute_stack, coverage_preview,
+)
 from .store import Store
 
 
@@ -450,17 +453,33 @@ def register_integrations(api, service):
             images = service.images(sid)
             verify_computed(images.document, options)
             product = compute_stack(images, options)
-            mode = enum(options.get("format", "json"), "叠加文件", {"json", "image", "coverage", "fits", "coverage_fits"})
+            mode = enum(
+                options.get("format", "json"), "叠加文件",
+                {"json", "image", "coverage", "fits", "coverage_fits", "status_fits"},
+            )
             if mode == "image":
                 rendered, _ = render_plane(product.plane, images.document["stretch"])
                 return image_response(rendered)
             if mode == "coverage":
-                return image_response(coverage_preview(product.coverage, len(product.report["used"])))
+                return image_response(coverage_preview(product.coverage, product.status, len(product.report["used"])))
             if mode == "fits":
                 body = make_fits(product.plane.values, {"BUNIT": "ADU/s", "FILTER": product.report["band"]})
                 return attachment(body, "application/fits", "aligned-stack.fits")
             if mode == "coverage_fits":
-                body = make_fits(product.coverage, {"BUNIT": "frames"}, unsigned=True)
+                body = make_fits(product.coverage, {"BUNIT": "accepted_samples"}, unsigned=True)
                 return attachment(body, "application/fits", "stack-support.fits")
+            if mode == "status_fits":
+                body = make_fits(
+                    product.status,
+                    {
+                        "BUNIT": "support_state",
+                        "S0_UNCOV": STATUS_UNCOVERED,
+                        "S1_CLEAN": STATUS_CLEAN,
+                        "S2_REJ": STATUS_REJECTED,
+                        "S3_UNRES": STATUS_UNRESOLVED,
+                    },
+                    unsigned=True,
+                )
+                return attachment(body, "application/fits", "stack-support-status.fits")
             return jsonify(product.report)
         return service.compute(compute)
