@@ -8,6 +8,7 @@ from .exports import csv_bytes
 from .footprint import draw_coverage, footprint_plan
 from .gain import gain_report
 from .growth import flux_growth
+from .noise_curve import TILE_REJECTIONS, noise_curve_report
 from .pairing import pair_report
 from .registration import preview_stream
 from .surface import draw_regions_on_reference, surface_brightness
@@ -24,6 +25,54 @@ def growth_csv(result):
 def gain_csv(report):
     fields = ("first", "second", "x", "y", "center_adu", "variance_adu2", "gain", "pair_difference", "samples")
     return csv_bytes(fields, ([point[key] for key in fields] for point in report["estimates"]))
+
+
+def noise_level_csv(report):
+    columns = [
+        "level_index", "median_net_adu", "level_spread_adu", "state", "state_reason",
+        "frame_count", "independent_frames_used", "pairs_total", "pairs_measured",
+        "included_flat_filenames", "max_saturated_fraction",
+        "gain_median_e_per_adu", "gain_sigma", "noise_median_adu", "noise_sigma_adu",
+        "expected_noise_adu", "gain_deviation", "noise_deviation",
+    ]
+
+    def rows():
+        for level in report["levels"]:
+            yield [
+                level["index"], level["median_net_adu"], level["level_spread_adu"], level["state"],
+                level["state_reason"], level["frame_count"], level["independent_frames"],
+                level["pair_count_total"], level["pair_count_measured"],
+                " | ".join(frame["filename"] for frame in level["frames"]),
+                level["max_saturated_fraction"], level["gain_median"], level["gain_sigma"],
+                level["noise_adu"], level["noise_sigma"], level["expected_noise_adu"],
+                level["gain_deviation"], level["noise_deviation"],
+            ]
+
+    return csv_bytes(columns, rows())
+
+
+def noise_pair_csv(report):
+    columns = [
+        "level_index", "state", "first_flat", "second_flat", "exposure_seconds",
+        "net_level_adu", "tiles_kept", "tiles_total", "gain_median_e_per_adu",
+        "gain_sigma", "noise_median_adu", "variance_median_adu2", "rejection_reasons",
+    ]
+
+    def rows():
+        for level in report["levels"]:
+            for pair in level["pairs"]:
+                reasons = " | ".join(
+                    f"{TILE_REJECTIONS.get(code, code)}:{count}"
+                    for code, count in sorted(pair["rejection_reasons"].items())
+                )
+                yield [
+                    level["index"], pair["state"], pair["first"], pair["second"], pair["exposure"],
+                    pair["net_level_adu"], pair["tiles_kept"], pair["tiles_total"],
+                    pair["gain_median"], pair["gain_sigma"], pair["noise_adu"],
+                    pair["variance_median"], reasons,
+                ]
+
+    return csv_bytes(columns, rows())
 
 
 def surface_csv(report):
@@ -68,6 +117,17 @@ def register_inspection_tools(api, service):
             result = gain_report(images, options)
             if options.get("format") == "csv":
                 return attachment(gain_csv(result), "text/csv; charset=utf-8", "detector-gain-check.csv")
+            return jsonify(result)
+        return run(sid, compute)
+
+    @api.post("/series/<sid>/noise-curve")
+    def flat_noise_curve(sid):
+        def compute(images, options):
+            result = noise_curve_report(images, options)
+            if options.get("format") == "level_csv":
+                return attachment(noise_level_csv(result), "text/csv; charset=utf-8", "flat-noise-levels.csv")
+            if options.get("format") == "pair_csv":
+                return attachment(noise_pair_csv(result), "text/csv; charset=utf-8", "flat-noise-pairs.csv")
             return jsonify(result)
         return run(sid, compute)
 

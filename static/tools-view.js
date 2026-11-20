@@ -15,6 +15,19 @@ const coverageModes = [["detector", "探测器画幅"], ["valid", "校准有效�
 const figures = figures => figures.filter(([url]) => url).map(([url, label]) =>
   `<figure class="wide-preview"><img src="${E(url)}" alt="${E(label)}"><figcaption>${E(label)}</figcaption></figure>`).join("");
 const flag = code => status(stateLabel(code), ["measured", "inside", "consistent", "ok", "used"].includes(code));
+const NOISE_STATES = {
+  stable: ["稳定", true],
+  deviation_confirmed: ["偏离已证实", false],
+  insufficient_independent: ["独立复测不足", false],
+  saturated_present: ["档内有饱和", false],
+  no_valid_tiles: ["无有效取样块", false],
+  low_signal: ["信号过低", false],
+  no_model: ["缺参考模型", false],
+};
+const noiseFlag = code => {
+  const [label, good] = NOISE_STATES[code] || [code, false];
+  return status(label, good);
+};
 const sourceFits = [["raw", "原始像素"], ["calibrated", "校准后"]];
 const overview = (stats, keys) => `<div class="meta-list">${keys.map(([name, title, render]) => `<div><span>${E(title)}</span><b>${render ? render(stats[name]) : E(stats[name] ?? "—")}</b></div>`).join("")}</div>`;
 const imageBlock = (url, title) => url ? figures([[url, title]]) : "";
@@ -89,12 +102,80 @@ function footprintResult({data, images}) {
 }
 
 function gainResult({data}) {
-  const pairs = [...data.bias_pairs.map(row => ["偏置", row]), ...data.flat_pairs.map(row => ["平场", row])];
+  const allPairs = [...data.bias_pairs.map(row => ["偏置", row]), ...data.flat_pairs.map(row => ["平场", row])];
   return `${overview(data, [["gain_e_per_adu", "增益 e⁻/ADU", rates], ["gain_pair_spread", "配对增益离散", rates],
     ["read_noise_adu", "读出噪声 ADU", rates], ["read_noise_e", "读出噪声 e⁻", rates], ["tile_count", "每对取样格"]])}
-    ${grid(["类型", "第一张", "第二张", "有效块", "估计值", "离散"], pairs.map(([type, row]) =>
+    ${grid(["类型", "第一张", "第二张", "有效块", "估计值", "离散"], allPairs.map(([type, row]) =>
       [type, E(row.first), E(row.second), row.patches ?? "—", rates(row.median), rates(row.sigma)]))}`;
 }
+
+function noiseCurveResult({data}) {
+  const window = data.stable_range || {};
+  const windowKpis = [
+    ["lower_adu", "稳定范围下限 净 ADU", v => rates(v)],
+    ["upper_adu", "稳定范围上限 净 ADU", v => rates(v)],
+    ["status", "上限依据", v => ({
+      confirmed_ceiling: "偏离已证实", verified_top: "最高档已验证", evidence_incomplete: "亮档证据不足",
+      no_stable_level: "无稳定档",
+    }[v] || v)],
+  ];
+  const windowPanel = `<div class="meta-list">${windowKpis.map(([name, title, render]) =>
+    `<div><span>${E(title)}</span><b>${window[name] == null ? "—" : E(render(window[name]))}</b></div>`).join("")}</div>
+    <p class="help">${E(window.note || "—")}</p>
+    ${window.evidence_incomplete_levels?.length ? `<p class="help">证据不足档：${
+      window.evidence_incomplete_levels.map(row => `第 ${row.level + 1} 档（${NOISE_STATES[row.state]?.[0] || row.state}）`).join("、")
+    }</p>` : ""}`;
+  const levelRows = data.levels.map(level => [
+    String(level.index + 1), rates(level.median_net_adu), rates(level.level_spread_adu),
+    `${level.independent_frames} / ${level.frame_count}`,
+    `${level.pair_count_measured}${level.pair_count_capped ? "（封顶）" : ""}`,
+    rates(level.gain_median), rates(level.noise_adu), pct(level.max_saturated_fraction),
+    noiseFlag(level.state),
+  ]);
+  const pairRows = data.levels.flatMap(level => level.pairs.map(pair => [
+    String(level.index + 1), pair.state === "measured" ? status("已测量", true) : status("无有效块", false),
+    E(pair.first), E(pair.second), rates(pair.net_level_adu), String(pair.tiles_kept),
+    rates(pair.gain_median), rates(pair.noise_adu), E(rejectionText(pair.rejection_reasons)),
+  ]));
+  const frameRows = data.levels.flatMap(level => level.frames.map(frame => [
+    String(level.index + 1), E(frame.filename), rates(frame.exposure), rates(frame.net_level_adu),
+    rates(frame.tile_level_spread_adu), pct(frame.saturated_fraction), pct(frame.invalid_fraction),
+    frame.used_in_pairs ? status("已纳入", true) : status("未纳入", false),
+  ]));
+  const legend = `<div class="legend-inline">${Object.entries(NOISE_STATES).map(([code, [label]]) =>
+    `<span><i style="background:${noiseColor(code)};border-radius:50%"></i>${E(label)}</span>`).join("")}
+    <span><i style="background:#b7cbff;height:2px;width:10px;border-radius:0"></i>光子转移参考</span>
+    <span><i style="background:rgba(124,226,216,.5);width:10px;height:10px"></i>稳定范围</span></div>`;
+  return `${overview(data, [["reference_gain_e_per_adu", "参考增益 e⁻/ADU", rates], ["read_noise_adu", "读出噪声 ADU", rates],
+    ["bias_pair_count", "偏置对", null], ["flat_frame_count", "启用平场", null],
+    ["min_independent", "独立复测最少帧数", null]])}
+    <h3>稳定工作范围</h3>${windowPanel}
+    <h3>噪声随亮度</h3>${legend}
+    <canvas class="chart" id="noise-curve-chart" aria-label="噪声随平场净亮度变化曲线"></canvas>
+    <p class="help">纵轴为单帧噪声 ADU（配对差方差减半、扣除偏置噪声底后的平方根）；点旁数字为亮度档序号。</p>
+    <h3>逐亮度档（可追溯实际纳入的平场）</h3>
+    ${grid(["档", "净亮度 ADU", "档内跨度", "独立／总平场", "有效配对", "增益 e⁻/ADU", "噪声 ADU", "最高饱和比例", "证据状态"], levelRows)}
+    ${data.levels.some(level => level.state_reason) ? `<ul class="help compact-list">${data.levels.map(level =>
+      `<li>第 ${level.index + 1} 档：${E(level.state_reason)}</li>`).join("")}</ul>` : ""}
+    <h3>实际纳入的平场清单</h3>
+    ${grid(["档", "平场文件", "曝光 s", "净亮度 ADU", "块间跨度", "饱和比例", "无效比例", "是否纳入配对"], frameRows)}
+    ${data.excluded_frames?.length ? `<p class="help">未分档：${data.excluded_frames.map(row => E(row.filename)).join("、")}</p>` : ""}
+    <h3>逐配对取证（含共用原图的所有配对与剔除原因）</h3>
+    ${grid(["档", "状态", "第一张", "第二张", "净亮度 ADU", "保留块", "增益 e⁻/ADU", "噪声 ADU", "块剔除统计"], pairRows)}`;
+}
+
+function noiseColor(code) {
+  return {
+    stable: "#7ce2d8", deviation_confirmed: "#ef8f75", insufficient_independent: "#efba75",
+    saturated_present: "#d491e3", no_valid_tiles: "#8b97ad", low_signal: "#9caacf", no_model: "#efba75",
+  }[code] || "#9caacf";
+}
+const TILE_REJECTION_LABELS = {
+  low_coverage: "覆盖不足", low_signal: "信号过低", lamp_drift: "灯源变动",
+  trim_failed: "剪裁不足", floor_not_exceeded: "未超噪声底", gain_out_of_range: "增益越界",
+};
+const rejectionText = reasons => Object.entries(reasons || {})
+  .map(([code, count]) => `${TILE_REJECTION_LABELS[code] || code}:${count}`).join(" ") || "—";
 
 function growthResult({data}) {
   return `${overview(data, [["recommended_plateau_radius", "累计光度进入平台 px", rates], ["max_snr_radius", "最高中位信噪比 px", rates],
@@ -184,6 +265,23 @@ export const definitions = {
     fields: (d, o) => bandPick(d, filtered(d, o)) + numeric("取样块宽度 px", "tile_size", o.tile_size ?? 32, 12, 96, 1) +
       numeric("平场亮度允许差", "stability", o.stability ?? .025, .001, .10),
   },
+  noise_curve: {
+    title: "噪声亮度曲线", route: "/noise-curve", result: noiseCurveResult,
+    csv: "flat-noise-levels.csv", extraCsv: "flat-noise-pairs.csv",
+    fields: (d, o) => {
+      const flatBands = [...new Set(d.calibration_frames
+        .filter(frame => frame.enabled && frame.kind === "flat")
+        .map(frame => frame.band))].sort();
+      const current = o.band ?? flatBands[0] ?? filters(d)[0]?.[0] ?? "";
+      return pick("滤镜", "band", flatBands.map(band => [band, band || "无滤镜标签"]), current) +
+        numeric("取样块宽度 px", "tile_size", o.tile_size ?? 32, 12, 96, 1) +
+        numeric("亮度分档相对间隔", "level_gap", o.level_gap ?? .08, .02, .50) +
+        numeric("配对亮度允许差", "stability", o.stability ?? .025, .001, .10) +
+        numeric("稳定允许相对偏差", "tolerance", o.tolerance ?? .10, .03, .35) +
+        numeric("独立复测最少平场数", "min_independent", o.min_independent ?? 3, 2, 8, 1) +
+        numeric("稳定判定最低净 ADU", "min_net_adu", o.min_net_adu ?? 200, 10, 50000);
+    },
+  },
   background: {
     title: "天空背景图", route: (_, o) => `/exposures/${o.frame}/background`, result: backgroundResult, images: ["sky", "residual"],
     fields: (d, o, v) => framePick(d, "曝光", "frame", o.frame ?? selectedFrame(v)?.id) +
@@ -234,7 +332,11 @@ export const definitions = {
 
 export function fieldTools(view) {
   const doc = view.doc;
-  if (!doc.frames.length) return panel("核验工具", box("请先导入一张科学曝光。"));
+  const hasCalibration = doc.calibration_frames.length > 0;
+  if (!doc.frames.length) {
+    if (!hasCalibration) return panel("核验工具", box("请先导入一张科学曝光。"));
+    view.fieldTool = "noise_curve";
+  }
   const key = view.fieldTool || "timeline";
   const definition = definitions[key];
   const result = view.toolResult?.key === key ? view.toolResult : null;
@@ -244,7 +346,8 @@ export function fieldTools(view) {
     </select></label></div>`;
   const buttons = definition.toolbar ? definition.toolbar(doc) : "";
   let exports = "";
-  if (result && definition.csv) exports += downloadButton("下载 CSV", "csv", definition.csv);
+  if (result && definition.csv) exports += downloadButton("下载逐档 CSV", "level_csv", definition.csv);
+  if (result && definition.extraCsv) exports += downloadButton("下载逐配对 CSV", "pair_csv", definition.extraCsv);
   if (result && definition.suffix) exports += downloadButton(definition.suffix === "png" ? "下载预览册" : "下载 FITS／PNG ZIP",
     definition.exportFormat, definition.suffix === "png" ? "exposure-contact-sheet.png" : "native-detector-cutouts.zip");
   return `<div class="column">

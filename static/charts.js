@@ -121,6 +121,80 @@ export function curveChart(canvas, curve, activeId) {
   }
 }
 
+const NOISE_STATE_COLORS = {
+  stable: "#7ce2d8",
+  deviation_confirmed: "#ef8f75",
+  insufficient_independent: "#efba75",
+  saturated_present: "#d491e3",
+  no_valid_tiles: "#8b97ad",
+  low_signal: "#9caacf",
+  no_model: "#efba75",
+};
+
+export function noiseCurveChart(canvas, report) {
+  const levels = report.levels.filter(level => level.noise_adu !== null);
+  if (!levels.length) {
+    noData(canvas, "没有可绘制的亮度档");
+    return;
+  }
+  const xValues = levels.map(level => level.median_net_adu);
+  const curve = report.model_curve || [];
+  if (curve.length) xValues.push(...curve.map(point => point.net_level_adu));
+  const yValues = [...levels.map(level => level.noise_adu),
+    ...levels.map(level => level.noise_sigma ? level.noise_adu + level.noise_sigma : level.noise_adu),
+    ...curve.map(point => point.expected_noise_adu)];
+  const xMin = Math.min(...xValues);
+  const xMax = Math.max(...xValues);
+  const x0 = Math.max(0, xMin - (xMax - xMin || xMax) * 0.06);
+  const x1 = xMax + (xMax - xMin || xMax) * 0.06;
+  const y0 = Math.max(0, Math.min(...yValues) * 0.9);
+  const y1 = Math.max(...yValues) * 1.05;
+  const {ctx, cx, cy, top, bottom} = chartFrame(canvas, [x0, x1], [y0, y1],
+    value => fmt(value, 0), value => fmt(value, 2));
+  const window = report.stable_range;
+  if (window?.lower_adu !== null && window?.upper_adu !== null && window.lower_adu !== undefined) {
+    ctx.fillStyle = "rgba(124, 226, 216, 0.10)";
+    ctx.fillRect(cx(window.lower_adu), top, Math.max(2, cx(window.upper_adu) - cx(window.lower_adu)), bottom - top);
+    ctx.strokeStyle = "rgba(124, 226, 216, 0.55)";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx(window.upper_adu), top);
+    ctx.lineTo(cx(window.upper_adu), bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (curve.length) {
+    ctx.strokeStyle = "#b7cbff";
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    curve.forEach((point, index) => {
+      const x = cx(point.net_level_adu), y = cy(point.expected_noise_adu);
+      index ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  for (const level of levels) {
+    const x = cx(level.median_net_adu), y = cy(level.noise_adu);
+    const color = NOISE_STATE_COLORS[level.state] || "#9caacf";
+    if (level.noise_sigma) {
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x, cy(level.noise_adu - level.noise_sigma));
+      ctx.lineTo(x, cy(level.noise_adu + level.noise_sigma));
+      ctx.stroke();
+    }
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, level.state === "stable" ? 4 : 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#a4b4d2";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(String(level.index + 1), x, y - 7);
+  }
+}
+
 export function histogramChart(canvas, result) {
   if (!result?.counts.length) {
     noData(canvas, "无有效像素");

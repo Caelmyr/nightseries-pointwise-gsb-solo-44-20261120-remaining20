@@ -164,6 +164,7 @@ label.check { display: inline-flex; align-items: center; gap: 6px; min-height: 3
 .help { color: var(--muted); font-size: 12px; line-height: 1.7; }
 .empty-box { min-height: 86px; display: grid; align-content: center; text-align: center; color: var(--muted); padding: 15px; }
 .table-wrap { width: 100%; overflow: auto; max-height: 580px; }
+.compact-list { margin: 8px 0; padding-left: 18px; display: grid; gap: 4px; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 thead { position: sticky; top: 0; z-index: 1; background: #1a2232; }
 th, td { border-bottom: 1px solid var(--subtle); text-align: left; padding: 8px 10px; white-space: nowrap; }

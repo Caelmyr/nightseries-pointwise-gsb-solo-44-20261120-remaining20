@@ -3,7 +3,7 @@ import {
   request, roles, shortDate, showMessage, sources, stateLabel,
 } from "./ui.js";
 import { definitions, fieldTools } from "./tools-view.js";
-import { curveChart, drawRegions, histogramChart, profileChart } from "./charts.js";
+import { curveChart, drawRegions, histogramChart, noiseCurveChart, profileChart } from "./charts.js";
 import {
   acquisition, alignment, archives, inspection, noSeries, photometry, quality, selectedFrame, stacks, tabs, title,
 } from "./views.js";
@@ -150,6 +150,8 @@ function repaint() {
   if (histogram) histogramChart(histogram, session.histogram);
   const profile = $("#profile-chart");
   if (profile) profileChart(profile, session.profile);
+  const noise = $("#noise-curve-chart");
+  if (noise && session.toolResult?.key === "noise_curve") noiseCurveChart(noise, session.toolResult.data);
 }
 
 function valueEditor(title, content, handler, submit) {
