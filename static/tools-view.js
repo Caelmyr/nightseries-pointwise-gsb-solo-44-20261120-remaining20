@@ -50,6 +50,31 @@ function skyResult(result) {
       [E(row.label), fmt(row.ra, 6), fmt(row.dec, 6), fmt(row.x), fmt(row.y), flag(row.state)]))}` : ""}`;
 }
 
+function starMatchResult({data, images}) {
+  const best = data.solutions?.[0];
+  if (!best) return box("没有得到候选配对。");
+  const statusText = {
+    unique: "唯一可靠解", corner_only: "支持星只集中在局部", ambiguous: "存在多套说得通的对应",
+  }[data.status];
+  const banner = data.status === "unique"
+    ? `<p class="help">状态：<b>${E(statusText)}</b>。核对下图连线与残差后可写入天区坐标。</p>`
+    : `<p class="help warn">状态：<b>${E(statusText)}</b>。工作台不会自动套用，请调整先验或人工核对。</p>`;
+  const rivals = data.solutions.slice(1);
+  const rivalTable = rivals.length
+    ? `<h3>竞争解（未采用）</h3>${grid(["解", "配对数", "RMS ″", "范围 / 对角"],
+        rivals.map((sol, index) => [`竞争解 ${index + 2}`, sol.pair_count, rates(sol.rms_arcsec), pct(sol.spread_ratio)]))}`
+    : "";
+  return `${banner}
+    ${overview(best, [["pair_count", "配对星数"], ["rms_arcsec", "残差 RMS ″", rates],
+      ["worst_arcsec", "最大残差 ″", rates], ["spread_ratio", "支持范围 / 画幅对角", pct]])}
+    ${imageBlock(images.image, "参考图：方框=检星，十字=星表先验，箭头=配对残差")}
+    ${rivalTable}
+    <h3>拟采用对应与残差</h3>
+    ${grid(["星表名称", "X", "Y", "RA °", "Dec °", "残差 ″"], best.pairs.map(row =>
+      [E(row.label), fmt(row.x, 1), fmt(row.y, 1), fmt(row.ra, 6), fmt(row.dec, 6), rates(row.residual_arcsec)]))}
+    ${data.status === "unique" ? action("确认并写入天区坐标", "sky-match-apply", {style: "tiny primary"}) : ""}`;
+}
+
 function guideResult({data}) {
   return `${overview(data.summary, [["measured", "可测光心"], ["max_distance", "最大残差 px", rates], ["outside_limit", "超出提示阈值"]])}
     ${grid(["曝光", "中点 UTC", "导星状态", "原生 ΔX", "原生 ΔY", "残余 ΔX", "残余 ΔY", "信噪比"], data.rows.map(row =>
@@ -154,6 +179,7 @@ export const definitions = {
     fields: (d, o) => numeric("参考像素 X", "x", o.x ?? Math.round(d.dimensions.width / 2), 0, d.dimensions.width - 1)
       + numeric("参考像素 Y", "y", o.y ?? Math.round(d.dimensions.height / 2), 0, d.dimensions.height - 1),
     toolbar: d => action("导入本地星表", "sky-catalog", {style: "tiny"}) +
+      action("自动配对星表", "sky-match", {style: "tiny"}) +
       action("定标星拟合", "sky-plate", {style: "tiny ghost"}) +
       (d.plate ? action("移除手工定标", "sky-plate-clear", {style: "tiny danger"}) : ""),
   },
@@ -162,6 +188,18 @@ export const definitions = {
     fields: (d, o) => bandPick(d, o.band ?? "all", true) +
       numeric("每行检点数", "subdivisions", o.subdivisions ?? 5, 3, 12, 1) +
       numeric("比较容差 ″", "tolerance", o.tolerance ?? 3.5, .05, 120),
+  },
+  star_match: {
+    title: "自动星表配对", route: "/sky/match", method: "POST", result: starMatchResult, images: ["image"],
+    fields: (d, o) =>
+      numeric("中心赤经 °", "center_ra", o.center_ra ?? "", 0, 360) +
+      numeric("中心赤纬 °", "center_dec", o.center_dec ?? "", -89.999, 89.999) +
+      numeric("每像素角度 ″", "scale_arcsec", o.scale_arcsec ?? "", .01, 3600) +
+      numeric("相机朝向 °", "angle_deg", o.angle_deg ?? 0, -360, 360) +
+      pick("相机镜像", "mirror", [[false, "否（赤经轴常规反向）"], [true, "是（额外翻转）"]], o.mirror ?? false) +
+      numeric("先验不确定度 ″", "uncertainty_arcsec", o.uncertainty_arcsec ?? 300, 1, 200000) +
+      numeric("配对容差 ″", "tolerance_arcsec", o.tolerance_arcsec ?? 4, .1, 120) +
+      numeric("检星上限", "star_cap", o.star_cap ?? 80, 8, 120, 1),
   },
   guide: {
     title: "导星光心", route: "/guide", result: guideResult, csv: "guiding-review.csv",

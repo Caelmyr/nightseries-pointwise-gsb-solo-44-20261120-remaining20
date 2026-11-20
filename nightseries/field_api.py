@@ -13,6 +13,7 @@ from .guiding import guide_report
 from .platecheck import audit_plates, draw_plate_differences
 from .observing import LOG_COLUMNS, coverage_report, draft_log_patch
 from .sheets import read_sheet
+from .starmatch import build_match_report, draw_match_preview
 
 CATALOG_COLUMNS = ("label", "ra", "dec", "magnitude")
 ANCHOR_COLUMNS = ("label", "x", "y", "ra", "dec", "weight")
@@ -129,6 +130,62 @@ def register_field_tools(api, service):
     @api.delete("/series/<sid>/sky/plate")
     def reset_plate(sid):
         return jsonify(store.set_plate(sid, version_for(request.args), None))
+
+    @api.post("/series/<sid>/sky/match")
+    def match_reference_stars(sid):
+        options = request_data()
+
+        def compute():
+            images = service.images(sid)
+            verify_computed(images.document, options)
+            report = build_match_report(images, options)
+            if options.get("format") == "image":
+                return image_response(draw_match_preview(images, report, options))
+            return jsonify(report)
+        return service.compute(compute)
+
+    @api.post("/series/<sid>/sky/match/apply")
+    def apply_matched_plate(sid):
+        options = request_data()
+
+        def compute():
+            images = service.images(sid)
+            document = images.document
+            verify_computed(document, options)
+            report = build_match_report(images, options)
+            if report["status"] != "unique":
+                raise DomainError(
+                    "当前配对不是唯一可靠解（角隅集中或存在竞争解），工作台不会自动写入天区坐标"
+                )
+            solution = report["solutions"][0]
+            if solution["pair_count"] < 4:
+                raise DomainError("支持配对不足 4 星，不能写入天区坐标")
+            plate = {
+                "solution": {
+                    "system": "ICRS",
+                    "origin": "starmatch",
+                    "origin_x": solution["origin_x"],
+                    "origin_y": solution["origin_y"],
+                    "center_ra": solution["center_ra"],
+                    "center_dec": solution["center_dec"],
+                    "matrix": solution["matrix"],
+                },
+                "mode": "starmatch",
+                "tolerance": report["tolerance_arcsec"],
+                "anchors": [
+                    {
+                        "label": row["label"], "x": row["x"], "y": row["y"],
+                        "ra": row["ra"], "dec": row["dec"], "weight": 1,
+                        "included": True, "residual_arcsec": row["residual_arcsec"],
+                    }
+                    for row in solution["pairs"]
+                ],
+                "rms_arcsec": solution["rms_arcsec"],
+                "worst_arcsec": solution["worst_arcsec"],
+            }
+            updated = store.set_plate(sid, version_for(options), plate)
+            return jsonify(result=plate, document=updated)
+        return service.compute(compute)
 
     @api.put("/series/<sid>/sky/catalog")
     def import_catalog(sid):

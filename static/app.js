@@ -545,6 +545,14 @@ function toolInputs(target, kind) {
   for (const checkbox of target.querySelectorAll("input[type=checkbox]")) values[checkbox.name] = checkbox.checked;
   if (values.band === "all") delete values.band;
   if (values.threshold === "") delete values.threshold;
+  if (key === "star_match") {
+    for (const name of ["center_ra", "center_dec", "scale_arcsec"]) {
+      if (values[name] === "" || values[name] === undefined) {
+        throw new Error("请填写中心赤经、赤纬和每像素角度后再配对。");
+      }
+    }
+    values.mirror = values.mirror === true || values.mirror === "true";
+  }
   if (kind === "surface") {
     for (const key of ["target", "sky"]) {
       values[key] = {};
@@ -774,6 +782,24 @@ const actions = {
   "stack-export": ({format}) => exportStack(format),
   "log-edit": editLog,
   "sky-catalog": editCatalog,
+  "sky-match": () => {
+    view().fieldTool = "star_match";
+    render();
+    showMessage("填写粗略中心、尺度和朝向后执行自动星表配对。");
+  },
+  "sky-match-apply": async () => {
+    const session = view();
+    const result = session.toolResult;
+    if (!result || result.key !== "star_match" || result.data.status !== "unique") {
+      throw new Error("当前配对不是唯一可靠解，不能写入。");
+    }
+    const options = {...session.fieldOptions.star_match};
+    const applied = await request(currentPath("/sky/match/apply"), {
+      method: "POST", data: mutableOptions(options),
+    });
+    await updateDocument(applied.document);
+    showMessage("已把自动配对写入当前参考帧的天区坐标。");
+  },
   "sky-plate": editPlate,
   "sky-plate-clear": () => confirmDelete("移除本组手工定标，保留参考原图及其图像头。", async () => {
     const next = await request(currentPath("/sky/plate") + queryCurrent(), {method: "DELETE"});
