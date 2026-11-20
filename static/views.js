@@ -4,7 +4,7 @@ import {
 } from "./ui.js";
 
 export const tabs = {
-  inspect: "影像阅览", acquisition: "采集与校准", alignment: "对准与差分",
+  inspect: "影像阅览", acquisition: "采集与校准", alignment: "对准与差分", track: "移动目标",
   photometry: "孔径光度", quality: "曝光质检", stack: "叠加", field: "核验工具", archives: "结果归档",
 };
 
@@ -207,6 +207,82 @@ export function sourceChoices(doc) {
     role,
     doc.apertures.filter(item => item.role === role).map(item => [item.id, item.label]),
   ]));
+}
+
+function seedPanel(view) {
+  const seeds = view.trackSeeds || [];
+  const items = seeds.map((seed, index) => {
+    const frame = view.doc.frames.find(row => row.id === seed.frame);
+    return `<li><span><b>种子 ${index + 1} · ${E(frame?.filename || "未知曝光")}</b>
+      <small>参考 ${fmt(seed.x, 2)}, ${fmt(seed.y, 2)}${frame ? " · " + time(frame.started) + " UTC" : ""}</small></span>
+      ${action("查看", "frame", {style: "tiny ghost", attrs: `data-id="${seed.frame}"`})}</li>`;
+  }).join("");
+  const legend = `<div class="legend-inline"><span><i class="target"></i>实测</span><span><i class="comparison"></i>预测</span>
+    <span><i class="check"></i>候选</span><span><i class="seed"></i>种子</span></div>`;
+  return panel("两粒种子定轨迹", `${seeds.length ? `<ul class="region-list">${items}</ul>` : box("还没有种子点。")}
+    <p class="help">激活标点工具后，在两张看得清楚的曝光上各点一次移动目标；同一帧再点会覆盖，超出两粒时替换最早的一粒。种子只用来估计移动方向和速度，不会当作实测位置。</p>${legend}`, {
+    hint: "在已对准图层上逐帧查看并标点",
+    controls: `<div class="actions">${action(view.tool === "track-seed" ? "停止标点" : "在图上标点", "tool", {
+      style: `tiny ${view.tool === "track-seed" ? "primary" : "ghost"}`, attrs: 'data-tool="track-seed"',
+    })}${action("清空种子", "track-clear", {style: "tiny ghost", disabled: !seeds.length})}</div>`,
+  });
+}
+
+function trackFormPanel(view) {
+  const doc = view.doc;
+  const opts = view.trackOptions || {};
+  const ready = (view.trackSeeds || []).length === 2;
+  return panel("逐帧实测", `<form id="track-form" class="forms">${pick("滤镜", "band", filters(doc), opts.band ?? currentBand(doc))}
+    ${input("搜索半径 px", "search_radius", opts.search_radius ?? 6, {type: "number", min: 2, max: 24, required: true})}
+    ${input("检出阈值 σ", "threshold", opts.threshold ?? 5, {type: "number", min: 3, max: 30, required: true})}
+    ${input("拟合窗口 px", "fit_radius", opts.fit_radius ?? 4, {type: "number", min: 2, max: 10, required: true})}
+    ${input("混淆半径 px", "blend_radius", opts.blend_radius ?? 4, {type: "number", min: 2, max: 12, required: true})}
+    <div class="actions wide"><button class="button primary" type="submit" ${ready ? "" : "disabled"}>沿轨迹逐帧实测</button></div></form>
+    <p class="help">按两粒种子估计匀速移动，在每帧已校准原图上独立搜索星点：只靠预测不落实测。贴近静止背景星、多个候选都吻合、或未检出的帧一律标为待核对，中间断帧不影响后面的帧继续查找。</p>`,
+    {hint: ready ? "种子齐全，可以计算" : "先标齐两粒种子点"});
+}
+
+function trackSummary(view, result) {
+  const s = result.summary;
+  const reasons = Object.entries(s.reasons || {});
+  return panel("轨迹概况", `<div class="kpis"><div class="kpi"><span>实测</span><strong>${s.measured} / ${s.frames}</strong></div>
+    <div class="kpi"><span>待核对</span><strong>${s.review}</strong></div>
+    <div class="kpi"><span>移动速度</span><strong>${fmt(s.velocity_px_hour, 1)} px/h</strong></div></div>
+    <div class="meta-list"><div><span>图面方向角</span><b>${fmt(s.angle_deg, 1)}°</b></div>
+    <div><span>实测残差 RMS</span><b>${fmt(s.rms_residual, 2)} px</b></div>
+    <div><span>滤镜</span><b>${E(result.band || "—")}</b></div></div>
+    ${reasons.length ? `<p class="help">待核对：${reasons.map(([key, count]) => `${stateLabel(key)} × ${count}`).join("、")}</p>` : ""}`,
+    {controls: action("下载轨迹 CSV", "track-csv", {style: "tiny"})});
+}
+
+function trackTable(view, result) {
+  const rows = result.rows.map(row => ({
+    cls: row.frame === view.frame ? "active" : "",
+    cells: [
+      `${action(row.filename, "frame", {style: "ghost tiny", attrs: `data-id="${row.frame}"`})}${row.seed ? badge("种子", "cyan") : ""}${row.extrapolated ? badge("外推") : ""}`,
+      `<span class="mono">${time(row.midpoint)}</span>`,
+      row.measured ? `<span class="mono">${fmt(row.measured.ref_x, 2)}</span>` : "—",
+      row.measured ? `<span class="mono">${fmt(row.measured.ref_y, 2)}</span>` : "—",
+      row.measured ? fmt(row.measured.snr, 1) : "—",
+      String(row.candidates.length),
+      row.state === "measured"
+        ? status("实测" + (row.note ? " · " + stateLabel(row.note) : ""), true)
+        : status("待核对 · " + stateLabel(row.reason), false),
+    ],
+  }));
+  return panel("逐帧轨迹", table(["曝光", "中点 UTC", "实测 X", "实测 Y", "SNR", "候选", "判定"], rows),
+    {bare: true, hint: "坐标为参考帧像素；留空表示该帧没有可信实测，不以预测值代替"});
+}
+
+export function track(view) {
+  const frame = selectedFrame(view);
+  if (!frame || frame.kind !== "science") {
+    return panel("移动目标", box("请先导入并对准一组同滤镜科学曝光。"));
+  }
+  const result = view.trackResult;
+  return `<div class="workspace-grid"><div class="column">${selectedPreview(view, frame)}
+    ${result ? trackTable(view, result) : ""}</div>
+    <div class="column">${seedPanel(view)}${trackFormPanel(view)}${result ? trackSummary(view, result) : ""}</div></div>`;
 }
 
 function curveRows(view, curve) {

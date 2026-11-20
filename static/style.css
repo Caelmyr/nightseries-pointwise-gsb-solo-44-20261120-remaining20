@@ -84,6 +84,7 @@ hr { border: 0; border-top: 1px solid var(--subtle); margin: 16px 0; }
 .demo-dot { height: 7px; width: 7px; border-radius: 50%; }
 .demo-dot.a { background: var(--cyan); }
 .demo-dot.b { background: #ac9bfe; }
+.demo-dot.c { background: var(--gold); }
 .sidebar-footer { margin-top: auto; padding: 35px 7px 2px; color: var(--dim); font-size: 10px; font-family: var(--mono); }
 .sidebar-footer span { display: block; margin-top: 4px; }
 .button {
@@ -145,6 +146,7 @@ hr { border: 0; border-top: 1px solid var(--subtle); margin: 16px 0; }
 .legend-inline .target { background: var(--cyan); }
 .legend-inline .comparison { background: var(--gold); }
 .legend-inline .check { background: #aaa3ff; }
+.legend-inline .seed { background: #ffffff; }
 .frame-tape { display: flex; gap: 6px; overflow-x: auto; padding: 10px 12px; border-top: 1px solid var(--line); align-items: center; }
 .frame-tape button { border-radius: 5px; min-width: 35px; flex: 0 0 auto; padding: 4px 5px; color: var(--muted); background: #1b2231; font: 11px var(--mono); }
 .frame-tape button.active { color: var(--cyan-strong); background: #203940; border-color: #426b6f; }

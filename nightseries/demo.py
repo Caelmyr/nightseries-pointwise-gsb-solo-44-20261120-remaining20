@@ -38,6 +38,29 @@ SCENARIOS = {
             ("K-03 检查星", "check", 310.6, 222.2, 685.0),
         ),
     },
+    "moving": {
+        "name": "N-057 · 移动亮点",
+        "notes": "合成演示。16 张 V 波段科学曝光，一个缓慢移动的亮点中途贴着静止背景星，后段又遇到两对很近的亮点。",
+        "seed": 7305,
+        "count": 16,
+        "band": "V",
+        "sources": (
+            ("S-11 目标星", "target", 252.4, 88.6, 880.0),
+            ("C-07 比较星", "comparison", 305.2, 196.4, 820.0),
+            ("K-05 检查星", "check", 186.3, 61.8, 600.0),
+        ),
+        "mover": {
+            "start": (42.0, 216.0),
+            "step": (6.2, -3.6),
+            "flux": 950.0,
+            "fade": {5: 0.006},
+        },
+        "static_stars": (
+            (91.6, 187.2, 800.0),
+            (125.2, 171.0, 800.0),
+            (131.9, 163.8, 800.0),
+        ),
+    },
 }
 
 
@@ -77,11 +100,13 @@ def insert_star(image, x, y, flux, sigma_x, sigma_y, angle):
 
 def star_catalog(scenario, rng):
     named = list(scenario["sources"])
-    stars = []
+    stars = [[x, y, strength] for x, y, strength in scenario.get("static_stars", ())]
     while len(stars) < 222:
         x = float(rng.uniform(5, WIDTH - 5))
         y = float(rng.uniform(5, HEIGHT - 5))
         if any(math.hypot(x - source[2], y - source[3]) < 17 for source in named):
+            continue
+        if any(math.hypot(x - star[0], y - star[1]) < 8 for star in stars):
             continue
         strength = float(np.clip(rng.lognormal(3.8, 1.18), 7.0, 900.0))
         stars.append((x, y, strength))
@@ -113,6 +138,16 @@ def synthetic_exposure(scenario, scenario_id, index, fields, catalog, rng):
         insert_star(
             signal, x + dx, y + dy,
             strength * transparency * exposure * modulation,
+            major, minor, angle,
+        )
+    mover = scenario.get("mover")
+    if mover:
+        fading = mover.get("fade", {}).get(index, 1.0)
+        insert_star(
+            signal,
+            mover["start"][0] + mover["step"][0] * index + dx,
+            mover["start"][1] + mover["step"][1] * index + dy,
+            mover["flux"] * fading * transparency * exposure,
             major, minor, angle,
         )
     detector = bias + dark * exposure + flat * signal
@@ -179,7 +214,7 @@ def make_demo(scenario_id, store):
         body = make_fits(pixels, science_header(scenario, index, exposure, dx, dy), unsigned=True)
         model = Store.prepare_asset(filename, body, "science", {})
         prepared.append(model)
-        if scenario_id == "variable" and index:
+        if scenario_id in {"variable", "moving"} and index:
             alignments[model[0]["id"]] = {"dx": dx, "dy": dy, "source": "manual"}
     prepared.extend(calibration_assets(scenario, fields, rng))
     doc = new_document(scenario["name"], synthetic=True)

@@ -6,13 +6,14 @@ import { definitions, fieldTools } from "./tools-view.js";
 import { curveChart, drawRegions, histogramChart, profileChart } from "./charts.js";
 import {
   acquisition, alignment, archives, inspection, noSeries, photometry, quality, selectedFrame, stacks, tabs, title,
+  track,
 } from "./views.js";
 
 const root = $("#workspace");
 const nav = $("#series-nav");
 const state = {list: [], view: null, epoch: 0};
 const view = () => state.view;
-const routes = {inspect: inspection, acquisition, alignment, photometry, quality, stack: stacks, field: fieldTools, archives};
+const routes = {inspect: inspection, acquisition, alignment, track, photometry, quality, stack: stacks, field: fieldTools, archives};
 let blinkTimer;
 let resizeDebounce;
 let renderEpoch = 0;
@@ -51,6 +52,7 @@ function resetResults(session) {
   Object.assign(session, {
     curve: null, quality: null, calibration: null, stack: null, registration: null,
     pairImage: null, toolResult: null, stars: null, pixel: null, chart: null, profile: null, points: [],
+    trackResult: null,
   });
 }
 
@@ -97,6 +99,7 @@ async function selectSeries(id, supplied) {
   state.view = {
     doc, tab: "inspect", frame: doc.reference || doc.frames[0]?.id || doc.calibration_frames[0]?.id,
     stream: "calibrated", flags: false, tool: "pixel", points: [], archives: null, pair: null,
+    trackSeeds: [], trackResult: null, trackOptions: null,
   };
   localStorage.setItem("nightseries-observation", id);
   renderNav();
@@ -140,7 +143,8 @@ function repaint() {
   const image = $("#frame-image");
   const frame = selectedFrame(session);
   if (overlay && frame && image?.naturalWidth) {
-    drawRegions(overlay, session.doc, frame, currentStream(frame), session.stars, session.points);
+    const track = session.tab === "track" ? {seeds: session.trackSeeds, result: session.trackResult} : null;
+    drawRegions(overlay, session.doc, frame, currentStream(frame), session.stars, session.points, track);
   }
   const curve = $("#curve-chart");
   if (curve && session.curve) curveChart(curve, session.curve, session.frame);
@@ -440,6 +444,22 @@ async function overlayClick(event, canvas) {
     regionEditor("apertures", null, {x: fmt(point.x, 2), y: fmt(point.y, 2)});
     return;
   }
+  if (tool === "track-seed") {
+    if (selectedFrame(session)?.kind !== "science") throw new Error("请在科学曝光上标种子点。");
+    if (session.stream !== "aligned" && frame !== doc.reference) {
+      const offset = doc.alignments[frame];
+      if (!offset) throw new Error("这张曝光还没有对准位移，请切到已对准图层或参考帧再标点。");
+      point.x -= offset.dx;
+      point.y -= offset.dy;
+    }
+    const kept = session.trackSeeds.filter(seed => seed.frame !== frame);
+    kept.push({frame, x: point.x, y: point.y});
+    if (kept.length > 2) showMessage("已替换最早的种子点。");
+    session.trackSeeds = kept.slice(-2);
+    session.trackResult = null;
+    render();
+    return;
+  }
   if (session.points.length >= 2) session.points = [];
   session.points.push(point);
   repaint();
@@ -478,6 +498,21 @@ async function analysis(kind, data) {
       session.quality = result;
     }
     render();
+  });
+}
+
+async function runTrack(data) {
+  const session = view();
+  const seeds = session.trackSeeds || [];
+  if (seeds.length !== 2) throw new Error("请先在两张看得清楚的曝光上各标一粒种子点。");
+  const options = {...data, seeds: seeds.map(({frame, x, y}) => ({frame, x, y}))};
+  const result = await request(currentPath("/tracklet"), {method: "POST", data: mutableOptions(options)});
+  withActive(session, () => {
+    session.trackOptions = options;
+    session.trackResult = result;
+    render();
+    const {measured, review} = result.summary;
+    showMessage(`逐帧实测完成：${measured} 帧实测 · ${review} 帧待核对`, review > 0);
   });
 }
 
@@ -673,9 +708,17 @@ const actions = {
   tab: async ({tab}) => {
     if (!(tab in tabs)) return;
     stopBlink();
-    view().tab = tab;
+    const session = view();
+    session.tab = tab;
+    if (tab === "track") {
+      const current = selectedFrame(session);
+      if (!current || current.kind !== "science") session.frame = session.doc.reference || session.doc.frames[0]?.id;
+      session.stream = "aligned";
+    } else if (session.tool === "track-seed") {
+      session.tool = "pixel";
+    }
     render();
-    if (tab === "archives" && view().archives === null) await loadArchives();
+    if (tab === "archives" && session.archives === null) await loadArchives();
   },
   frame: ({id}) => selectFrame(id),
   "open-frame": ({id}) => selectFrame(id, true),
@@ -689,8 +732,9 @@ const actions = {
   },
   stretch: stretchSettings,
   tool: ({tool}) => {
-    view().tool = tool;
-    view().points = [];
+    const session = view();
+    session.tool = session.tool === tool && tool !== "pixel" ? "pixel" : tool;
+    session.points = [];
     render();
   },
   histogram: async () => {
@@ -756,6 +800,20 @@ const actions = {
   compare,
   blink,
   "result-csv": ({kind}) => resultCsv(kind),
+  "track-csv": async () => {
+    const session = view();
+    if (!session.trackOptions) return;
+    const blob = await request(currentPath("/tracklet"), {
+      method: "POST", type: "blob", data: mutableOptions({...session.trackOptions, format: "csv"}),
+    });
+    download(blob, "moving-tracklet.csv");
+  },
+  "track-clear": () => {
+    const session = view();
+    session.trackSeeds = [];
+    session.trackResult = null;
+    render();
+  },
   "save-result": ({kind}) => saveResult(kind),
   archives: loadArchives,
   archive: async ({id}) => {
@@ -852,10 +910,11 @@ document.addEventListener("change", event => {
 
 document.addEventListener("submit", event => {
   const {target} = event;
-  if (!["curve-form", "quality-form", "stack-form", "field-form"].includes(target.id)) return;
+  if (!["curve-form", "quality-form", "stack-form", "field-form", "track-form"].includes(target.id)) return;
   event.preventDefault();
   const data = Object.fromEntries(new FormData(target));
   operate(() => {
+    if (target.id === "track-form") return runTrack(data);
     if (target.id === "field-form") {
       const key = view().fieldTool || "timeline";
       return runTool(key, toolInputs(target, key));

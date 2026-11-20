@@ -84,6 +84,30 @@ def profile_csv(profile):
     )
 
 
+def tracklet_csv(result):
+    columns = [
+        "filename", "started_utc", "midpoint_utc", "exposure_seconds", "filter",
+        "state", "reason", "seed_frame", "extrapolated",
+        "pred_ref_x", "pred_ref_y", "measured_ref_x", "measured_ref_y",
+        "native_x", "native_y", "snr", "flux_adu", "fwhm_px", "offset_distance_px",
+        "candidates", "note",
+    ]
+    rows = []
+    for row in result["rows"]:
+        measured = row["measured"] or {}
+        rows.append([
+            row["filename"], row["started"], row["midpoint"], row["exposure"], row["band"],
+            row["state"], row["reason"], "true" if row["seed"] else "false",
+            "true" if row["extrapolated"] else "false",
+            row["pred_x"], row["pred_y"],
+            measured.get("ref_x"), measured.get("ref_y"),
+            measured.get("native_x"), measured.get("native_y"),
+            measured.get("snr"), measured.get("flux"), measured.get("fwhm"),
+            measured.get("offset_distance"), len(row["candidates"]), row["note"],
+        ])
+    return csv_bytes(columns, rows)
+
+
 def asset_name(frame):
     return f"exposures/{frame['id']}{Path(frame['filename']).suffix.lower()}"
 

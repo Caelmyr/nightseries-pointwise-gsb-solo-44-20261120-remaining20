@@ -157,7 +157,71 @@ export function profileChart(canvas, result) {
   ctx.stroke();
 }
 
-export function drawRegions(canvas, doc, frame, stream, stars, toolPoints) {
+function drawTrack(ctx, px, py, frameId, toX, toY, track) {
+  const result = track.result;
+  ctx.font = "10px Consolas, sans-serif";
+  if (result) {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#efba7566";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    result.rows.forEach((row, index) => {
+      const x = px(toX(row.pred_x)), y = py(toY(row.pred_y));
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const row = result.rows.find(item => item.frame === frameId);
+    if (row) {
+      for (const cand of row.candidates) {
+        if (cand.ref_x == null || cand.ref_y == null) continue;
+        ctx.strokeStyle = cand.stationary === "yes" ? "#8d99ae" : "#aaa3ff";
+        ctx.strokeRect(px(toX(cand.ref_x)) - 3.5, py(toY(cand.ref_y)) - 3.5, 7, 7);
+      }
+      const x = px(toX(row.pred_x)), y = py(toY(row.pred_y));
+      ctx.strokeStyle = "#efba75";
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(x, y, 7, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(x - 10, y); ctx.lineTo(x - 4, y); ctx.moveTo(x + 4, y); ctx.lineTo(x + 10, y);
+      ctx.moveTo(x, y - 10); ctx.lineTo(x, y - 4); ctx.moveTo(x, y + 4); ctx.lineTo(x, y + 10);
+      ctx.stroke();
+      ctx.fillStyle = "#efba75";
+      ctx.fillText("预测", x + 9, y - 9);
+      if (row.measured) {
+        const mx = px(toX(row.measured.ref_x)), my = py(toY(row.measured.ref_y));
+        ctx.strokeStyle = "#7ce2d8";
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(mx, my, 7, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.lineWidth = 1.25;
+        ctx.fillStyle = "#7ce2d8";
+        ctx.fillText("实测", mx + 9, my + 15);
+      }
+    }
+  }
+  for (const seed of track.seeds || []) {
+    if (seed.frame !== frameId) continue;
+    const x = px(toX(seed.x)), y = py(toY(seed.y));
+    ctx.strokeStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.moveTo(x, y - 6);
+    ctx.lineTo(x + 6, y);
+    ctx.lineTo(x, y + 6);
+    ctx.lineTo(x - 6, y);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("种子", x + 8, y - 8);
+  }
+}
+
+export function drawRegions(canvas, doc, frame, stream, stars, toolPoints, track) {
   const {ctx, width, height} = context(canvas);
   const {width: w, height: h} = doc.dimensions;
   const sx = width / w, sy = height / h;
@@ -213,5 +277,10 @@ export function drawRegions(canvas, doc, frame, stream, stars, toolPoints) {
     ctx.moveTo(px(toolPoints[0].x), py(toolPoints[0].y));
     ctx.lineTo(px(toolPoints[1].x), py(toolPoints[1].y));
     ctx.stroke();
+  }
+  if (track && frame.kind === "science" && (!native || off)) {
+    const toX = x => native ? x + off.dx : x;
+    const toY = y => native ? y + off.dy : y;
+    drawTrack(ctx, px, py, frame.id, toX, toY, track);
   }
 }

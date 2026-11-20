@@ -14,7 +14,8 @@ from .domain import (
     enum, integer, list_value, object_value, text,
 )
 from .exports import (
-    ARCHIVE_LIMIT, photometry_csv, profile_csv, quality_csv, read_bundle, write_bundle,
+    ARCHIVE_LIMIT, photometry_csv, profile_csv, quality_csv, read_bundle, tracklet_csv,
+    write_bundle,
 )
 from .photometry import light_curve
 from .preview import (
@@ -25,6 +26,7 @@ from .raster import image_summary, make_fits
 from .registration import preview_stream, run_registration
 from .stacking import compute_stack, coverage_preview
 from .store import Store
+from .tracklet import tracklet_report
 
 
 class Service:
@@ -134,6 +136,7 @@ def create_app(data_path):
     register_checks(api, service)
     register_analysis(api, service)
     register_integrations(api, service)
+    register_tracklet(api, service)
     from .field_api import register_field_tools
     register_field_tools(api, service)
     from .analysis_api import register_inspection_tools
@@ -439,6 +442,21 @@ def register_analysis(api, service):
     def delete_snapshot(sid, snapshot):
         store.delete_snapshot(sid, snapshot)
         return "", 204
+
+
+def register_tracklet(api, service):
+    @api.post("/series/<sid>/tracklet")
+    def moving_tracklet(sid):
+        options = request_data()
+
+        def compute():
+            images = service.images(sid)
+            verify_computed(images.document, options)
+            result = tracklet_report(images, options)
+            if options.get("format") == "csv":
+                return attachment(tracklet_csv(result), "text/csv; charset=utf-8", "moving-tracklet.csv")
+            return jsonify(result)
+        return service.compute(compute)
 
 
 def register_integrations(api, service):
