@@ -59,6 +59,21 @@ def optical_fields():
     return yy, xx, flat, bias, dark
 
 
+# Readout electronics imprint an 8-row periodic horizontal banding.  The
+# affected phase and strength change on every read, so a median master bias
+# only dampens it; the surviving period is the evidence used for destriping.
+STRIPE_PERIOD = 8.0
+
+
+def readout_stripe(rng):
+    phase = float(rng.uniform(0, STRIPE_PERIOD))
+    amplitude = float(rng.uniform(3.2, 5.4))
+    rows = np.arange(HEIGHT)
+    primary = amplitude * np.sin(2 * np.pi * (rows + phase) / STRIPE_PERIOD)
+    harmonic = amplitude * 0.28 * np.sin(4 * np.pi * (rows + phase) / STRIPE_PERIOD + 0.7)
+    return (primary + harmonic)[:, None]
+
+
 def insert_star(image, x, y, flux, sigma_x, sigma_y, angle):
     radius = int(math.ceil(5.5 * max(sigma_x, sigma_y)))
     height, width = image.shape
@@ -117,6 +132,7 @@ def synthetic_exposure(scenario, scenario_id, index, fields, catalog, rng):
         )
     detector = bias + dark * exposure + flat * signal
     detector += rng.normal(0, np.sqrt(np.maximum(1, flat * signal)) * 0.41 + 2.5)
+    detector += readout_stripe(rng)
     for _ in range(4):
         y, x = rng.integers(3, HEIGHT - 3), rng.integers(3, WIDTH - 3)
         detector[y, x] += rng.uniform(450, 7400)
@@ -159,7 +175,7 @@ def calibration_assets(scenario, fields, rng):
     )
     for kind, exposure, band, values, noise, count in shots:
         for index in range(count):
-            data = values + rng.normal(0, noise, size=values.shape)
+            data = values + rng.normal(0, noise, size=values.shape) + readout_stripe(rng)
             headers = {"EXPTIME": exposure, "FILTER": band, "BUNIT": "ADU", "IMAGETYP": kind}
             filename = f"{kind}-{index + 1:02d}.fits"
             prepared.append(Store.prepare_asset(filename, make_fits(data, headers, unsigned=True), kind, {}))

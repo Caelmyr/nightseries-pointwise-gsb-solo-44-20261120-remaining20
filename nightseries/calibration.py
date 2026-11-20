@@ -97,6 +97,7 @@ class ObservationImages:
         self._bias_ready = False
         self._dark = {}
         self._flat = {}
+        self._stripe_evidence = None
         self._calibration_pixels = sum(len(frames) for frames in self.inputs.values()) * self.dims.pixels
         if self._calibration_pixels > MAX_ACTIVE_PIXELS:
             raise DomainError("当前启用校准图超过单次计算像素预算，请挂起一部分校准图")
@@ -177,7 +178,7 @@ class ObservationImages:
         self._flat[band] = combined
         return combined
 
-    def calibrated(self, frame_id):
+    def calibrated(self, frame_id, destripe=False):
         raw = self.raw(frame_id, use_detector_mask=True)
         frame = self.rows[frame_id]
         if frame["kind"] != "science":
@@ -192,7 +193,20 @@ class ObservationImages:
             notes.append("无有效同滤镜平场")
         valid = raw.valid & np.isfinite(values)
         values[~valid] = np.nan
-        return Plane(values, valid, raw.saturated, tuple(notes))
+        plane = Plane(values, valid, raw.saturated, tuple(notes))
+        if not destripe:
+            return plane
+        from .stripes import fit_frame_stripes
+
+        corrected, report, _ = fit_frame_stripes(plane, self.bias_stripe_evidence())
+        return corrected
+
+    def bias_stripe_evidence(self):
+        if self._stripe_evidence is None:
+            from .stripes import detect_bias_stripes
+
+            self._stripe_evidence = detect_bias_stripes(self)
+        return self._stripe_evidence
 
     def master_panel(self):
         descriptions = {}

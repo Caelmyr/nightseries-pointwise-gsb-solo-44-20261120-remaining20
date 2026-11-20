@@ -45,17 +45,57 @@ export function title(view) {
 function previewPath(view, frame) {
   const stream = frame.kind === "science" ? view.stream : "raw";
   return apiPath(view.doc.id, `/exposures/${frame.id}/image.png?` + queries({
-    stream, flags: view.flags ? 1 : 0, version: view.doc.revision,
+    stream, flags: view.flags ? 1 : 0, destripe: view.destripe ? 1 : 0, version: view.doc.revision,
   }));
+}
+
+function stripePanel(view, frame) {
+  if (!view.destripe || frame.kind !== "science" || view.stream === "raw") return "";
+  const report = view.stripeReport;
+  if (!report) return panel("去横带诊断", box("正在用偏置图核对读出条纹…"));
+  if (!report.confirmed) {
+    return panel("去横带诊断", box(`保持原校准结果。${E(report.reason_text || "偏置图证据不足")}`));
+  }
+  const fit = report.fit;
+  if (fit.state === "skipped") {
+    return panel("去横带诊断", box(`保持原校准结果。${E(fit.reason_text || "当前帧证据不足")}`)
+      + stripeMetrics(report, fit, false));
+  }
+  return panel("去横带诊断", `<p class="help">本帧已扣除偏置周期确认的读出横带，测量图层不受影响。</p>`
+    + stripeMetrics(report, fit, true)
+    + `<canvas class="chart short" id="stripe-spectrum" aria-label="偏置行频谱"></canvas>
+      <canvas class="chart short" id="stripe-profile" aria-label="本帧行信号与条纹模型"></canvas>`);
+}
+
+function stripeMetrics(report, fit, measured) {
+  const rows = [
+    ["偏置确认周期 (行)", fmt(report.period, 2)],
+    ["偏置一致帧数", `${report.bias.agreeing} / ${report.bias.frames}`],
+    ["本帧状态", measured ? "已扣除" : "跳过"],
+  ];
+  if (measured) {
+    rows.push(["条纹峰峰幅度 ADU", fmt(fit.amplitude_adu, 2)],
+      ["条纹 RMS ADU", fmt(fit.rms_adu, 2)],
+      ["拟合信噪比", fmt(fit.snr, 1)],
+      ["参与行比例", pct(fit.row_fraction)]);
+  } else if (fit.snr != null) {
+    rows.push(["本帧信噪比", fmt(fit.snr, 1)]);
+  }
+  if (fit.frame_period != null) rows.push(["本帧主峰周期 (行)", fmt(fit.frame_period, 2)]);
+  return `<div class="meta-list">${rows.map(([name, value]) =>
+    `<div><span>${E(name)}</span><b class="mono">${E(value)}</b></div>`).join("")}</div>`;
 }
 
 function selectedPreview(view, frame) {
   const doc = view.doc;
   const ready = view.stream !== "aligned" || frame.id === doc.reference || doc.alignments[frame.id];
   const stream = frame.kind === "science" ? view.stream : "raw";
+  const canDestripe = frame.kind === "science" && stream !== "raw";
   const controls = `<div class="widget-controls"><select id="stream" aria-label="影像图层" ${frame.kind === "science" ? "" : "disabled"}>
     ${choose(Object.entries(sources), stream)}</select>
-    ${action(view.flags ? "隐藏坏区标色" : "显示坏区标色", "flags", {style: "ghost"})}</div>`;
+    ${action(view.flags ? "隐藏坏区标色" : "显示坏区标色", "flags", {style: "ghost"})}
+    ${canDestripe ? action(view.destripe ? "停用去横带" : "去横带", "destripe",
+      {style: view.destripe ? "primary" : "ghost"}) : ""}</div>`;
   const image = ready || frame.kind !== "science"
     ? `<div class="frame-layer"><img id="frame-image" alt="${E(frame.filename)} 的星场预览" src="${previewPath(view, frame)}">
       <canvas id="overlay" aria-label="影像区域与像素取样"></canvas></div>`
@@ -64,9 +104,11 @@ function selectedPreview(view, frame) {
     ${doc.frames.map((item, index) => `<button type="button" class="${item.id === frame.id ? "active" : ""} ${item.enabled ? "" : "off"}"
       data-action="frame" data-id="${item.id}" aria-label="查看 ${E(item.filename)}" title="${E(item.filename)} · ${time(item.started)} UTC">${String(index + 1).padStart(2, "0")}</button>`).join("")}</div>` : "";
   return panel("曝光影像", `<div class="stage">${image}</div><div class="view-footer">
-    <span>${E(frame.filename)} · ${doc.dimensions.width} × ${doc.dimensions.height}</span>
+    <span>${E(frame.filename)} · ${doc.dimensions.width} × ${doc.dimensions.height}${
+      view.destripe && canDestripe ? " · 去横带预览" : ""}</span>
     <span id="cursor-readout">X — / Y —</span></div>${tape}`,
-  {hint: frame.kind === "science" ? "点击图面读取像素，可取孔径圆心或采样线端点。" : "校准文件原图", controls, cls: "preview-card", bare: true});
+  {hint: frame.kind === "science" ? "点击图面读取像素，可取孔径圆心或采样线端点。" : "校准文件原图", controls, cls: "preview-card", bare: true})
+    + stripePanel(view, frame);
 }
 
 function exposureDetails(view, frame) {

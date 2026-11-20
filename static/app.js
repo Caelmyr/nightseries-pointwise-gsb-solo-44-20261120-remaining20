@@ -3,7 +3,7 @@ import {
   request, roles, shortDate, showMessage, sources, stateLabel,
 } from "./ui.js";
 import { definitions, fieldTools } from "./tools-view.js";
-import { curveChart, drawRegions, histogramChart, profileChart } from "./charts.js";
+import { curveChart, drawRegions, histogramChart, profileChart, stripeProfileChart, stripeSpectrumChart } from "./charts.js";
 import {
   acquisition, alignment, archives, inspection, noSeries, photometry, quality, selectedFrame, stacks, tabs, title,
 } from "./views.js";
@@ -50,7 +50,8 @@ function resetResults(session) {
   for (const url of Object.values(session.toolResult?.images || {})) releaseUrl(url);
   Object.assign(session, {
     curve: null, quality: null, calibration: null, stack: null, registration: null,
-    pairImage: null, toolResult: null, stars: null, pixel: null, chart: null, profile: null, points: [],
+    pairImage: null, toolResult: null, stars: null, pixel: null, chart: null, profile: null,
+    stripeReport: null, points: [],
   });
 }
 
@@ -81,11 +82,13 @@ function selectFrame(id, openView = false) {
   session.stars = null;
   session.points = [];
   session.profile = null;
+  session.stripeReport = null;
   session.chart = null;
   if (openView) session.tab = "inspect";
   const frame = selectedFrame(session);
   if (frame?.kind !== "science" && session.tool !== "pixel") session.tool = "pixel";
   render();
+  loadStripeReport();
 }
 
 async function selectSeries(id, supplied) {
@@ -96,7 +99,7 @@ async function selectSeries(id, supplied) {
   stopBlink();
   state.view = {
     doc, tab: "inspect", frame: doc.reference || doc.frames[0]?.id || doc.calibration_frames[0]?.id,
-    stream: "calibrated", flags: false, tool: "pixel", points: [], archives: null, pair: null,
+    stream: "calibrated", flags: false, destripe: false, tool: "pixel", points: [], archives: null, pair: null,
   };
   localStorage.setItem("nightseries-observation", id);
   renderNav();
@@ -150,6 +153,10 @@ function repaint() {
   if (histogram) histogramChart(histogram, session.histogram);
   const profile = $("#profile-chart");
   if (profile) profileChart(profile, session.profile);
+  const spectrum = $("#stripe-spectrum");
+  if (spectrum) stripeSpectrumChart(spectrum, session.stripeReport);
+  const stripeProfile = $("#stripe-profile");
+  if (stripeProfile) stripeProfileChart(stripeProfile, session.stripeReport);
 }
 
 function valueEditor(title, content, handler, submit) {
@@ -405,8 +412,38 @@ async function frameApi(method, query = {}) {
   const session = view();
   const frame = selectedFrame(session);
   if (!frame) return null;
-  const params = queries({stream: currentStream(frame), version: session.doc.revision, ...query});
+  const params = queries({
+    stream: currentStream(frame), destripe: session.destripe ? 1 : 0,
+    version: session.doc.revision, ...query,
+  });
   return request(currentPath(`/exposures/${frame.id}/${method}?` + params), {type: query.format === "csv" ? "blob" : "json"});
+}
+
+async function loadStripeReport() {
+  const session = view();
+  const frame = selectedFrame(session);
+  if (!session.destripe || !frame || frame.kind !== "science" || session.stream === "raw") {
+    session.stripeReport = null;
+    return;
+  }
+  try {
+    const report = await request(currentPath(`/exposures/${frame.id}/stripes?` + queryCurrent().slice(1)));
+    withActive(session, () => {
+      if (session.frame === frame.id) {
+        session.stripeReport = report;
+        render();
+      }
+    });
+  } catch (error) {
+    withActive(session, () => {
+      session.stripeReport = {
+        confirmed: false, reason: "request_failed",
+        reason_text: `诊断请求失败：${error.message}`, bias: {spectrum: {}}, fit: {},
+      };
+      showMessage(error.message, true);
+      render();
+    });
+  }
 }
 
 function overlayPoint(event, canvas, dims) {
@@ -687,6 +724,13 @@ const actions = {
     view().flags = !view().flags;
     render();
   },
+  destripe: () => {
+    const session = view();
+    session.destripe = !session.destripe;
+    session.stripeReport = null;
+    render();
+    if (session.destripe) loadStripeReport();
+  },
   stretch: stretchSettings,
   tool: ({tool}) => {
     view().tool = tool;
@@ -830,8 +874,10 @@ document.addEventListener("change", event => {
     session.chart = null;
     session.pixel = null;
     session.stars = null;
+    session.stripeReport = null;
     session.points = [];
     render();
+    loadStripeReport();
   }
   if (node.id === "field-tool" && node.value in definitions) {
     view().fieldTool = node.value;

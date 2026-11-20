@@ -85,7 +85,8 @@ def view_plane(service, series_id, frame_id, params):
     images = service.images(series_id)
     verify_computed(images.document, params)
     stream = enum(params.get("stream", "raw"), "影像来源", STREAMS)
-    return images, preview_stream(images, frame_id, stream)
+    destripe = javascript_option(params.get("destripe")) and stream != "raw"
+    return images, preview_stream(images, frame_id, stream, destripe=destripe)
 
 
 def create_app(data_path):
@@ -373,6 +374,16 @@ def register_checks(api, service):
             return jsonify(
                 inputs=calibration_status(images.document), masters=images.master_panel(),
             )
+        return service.compute(compute)
+
+    @api.get("/series/<sid>/exposures/<frame>/stripes")
+    def stripe_diagnosis(sid, frame):
+        def compute():
+            images = service.images(sid)
+            verify_computed(images.document, request.args)
+            from .stripes import stripe_diagnosis
+
+            return jsonify(stripe_diagnosis(images, frame))
         return service.compute(compute)
 
     @api.get("/series/<sid>/exposures/<frame>/stars")

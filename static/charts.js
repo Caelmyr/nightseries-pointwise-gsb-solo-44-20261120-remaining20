@@ -157,6 +157,77 @@ export function profileChart(canvas, result) {
   ctx.stroke();
 }
 
+export function stripeSpectrumChart(canvas, report) {
+  const trace = report?.bias?.spectrum;
+  if (!trace?.periods?.length) {
+    noData(canvas, "偏置频谱无数据");
+    return;
+  }
+  const periods = trace.periods.filter(value => Number.isFinite(value));
+  const power = trace.power.slice(0, periods.length);
+  // The spectrum trace is ordered by Fourier bin, i.e. decreasing period.
+  const x0 = Math.min(...periods), x1 = Math.max(...periods);
+  const {ctx, cx, cy, top, bottom} = chartFrame(canvas, [x0, x1], [0, Math.max(...power)],
+    v => fmt(v, 0), v => fmt(v, 3));
+  ctx.fillStyle = "#73c6c8";
+  periods.forEach((period, index) => {
+    const x = cx(period), width = Math.max(1, (cx(period) - cx(period + 1)) * 0.8);
+    ctx.fillRect(x, cy(power[index]), width, cy(0) - cy(power[index]));
+  });
+  if (report.period) {
+    ctx.strokeStyle = COLORS.target;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cx(report.period), top);
+    ctx.lineTo(cx(report.period), bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = COLORS.target;
+    ctx.textAlign = "left";
+    ctx.fillText(`P=${fmt(report.period, 1)} 行`, cx(report.period) + 4, top + 8);
+  }
+}
+
+export function stripeProfileChart(canvas, report) {
+  const trace = report?.fit?.row_profile;
+  if (!trace?.rows?.length) {
+    noData(canvas, "本帧没有可用的行信号");
+    return;
+  }
+  const observed = trace.observed.filter(value => value !== null);
+  if (!observed.length) {
+    noData(canvas, "干净行不足");
+    return;
+  }
+  const yValues = [...observed, ...trace.model];
+  const {ctx, cx, cy} = chartFrame(canvas, [0, Math.max(...trace.rows)], range(yValues, 0.1),
+    v => fmt(v, 0), v => fmt(v, 1));
+  // Observed row medians: discrete points.
+  ctx.fillStyle = "#9caacf";
+  trace.rows.forEach((row, index) => {
+    if (trace.observed[index] === null) return;
+    ctx.beginPath();
+    ctx.arc(cx(row), cy(trace.observed[index]), 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  // Fitted periodic model: continuous line.
+  ctx.strokeStyle = COLORS.target;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  let started = false;
+  trace.rows.forEach((row, index) => {
+    const x = cx(row), y = cy(trace.model[index]);
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
 export function drawRegions(canvas, doc, frame, stream, stars, toolPoints) {
   const {ctx, width, height} = context(canvas);
   const {width: w, height: h} = doc.dimensions;

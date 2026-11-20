@@ -170,10 +170,10 @@ def run_registration(images, options):
     return {"reference": ref, "rows": report}, accepted
 
 
-def preview_stream(images, frame_id, stream):
+def preview_stream(images, frame_id, stream, destripe=False):
     if stream == "raw":
         return images.raw(frame_id)
-    plane = images.calibrated(frame_id)
+    plane = images.calibrated(frame_id, destripe=destripe and stream in {"calibrated", "aligned"})
     if stream == "calibrated":
         return plane
     offset = offset_for(images.document, frame_id)
